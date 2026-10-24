@@ -59,6 +59,8 @@ When `admin.require_second_approver: true`, policy applies, rollbacks and IP blo
 
 `suspicious` counts events with `anomaly_score >= 0.5` or an AI verdict of `suspicious`/`malicious`.
 
+The overview also carries `alerts_open` (unresolved alerts: `open` total plus counts per severity, and `acknowledged`), `detection_only` (monitoring-only mode), `policy_version`, and `pipeline` (event queue and storage counters, including `dropped` and `store_dropped`). The dashboard's status line is built from these.
+
 ### Events
 
 `GET /api/events?limit=100&before=<ts>&action=block&ip=1.2.3.4&path=/login&rule=block-sqli-args&q=text&min_anomaly=0.5&ai_category=malicious`
@@ -156,6 +158,8 @@ A dynamic block returns `403` before rules run and is recorded with the rule id 
 | GET | `/api/changes?status=pending` | admin | `{"changes": [{"id","ts","kind","summary","requested_by","status","decided_by"}]}` |
 | POST | `/api/changes/{id}/approve` | admin | must differ from the requester |
 | POST | `/api/changes/{id}/reject` | admin | — |
+
+Secret values in a policy (`turnstile_secret_key`, `cookie_secret`, and private JWK members) are never returned: `GET /api/policy` and `GET /api/policy/versions/{v}` show `__secret_unchanged__` in their place. Sending that placeholder back to validate, simulate or apply keeps the current value; a placeholder where the current policy has no value is rejected.
 
 The policy YAML holds only WAF keys (`rulesets`, `lists`, `scores`, `detection_only`, …). Server keys such as `listen` are rejected. Switching on `detection_only` is how to put the firewall into monitoring-only mode. Applying a policy resets rate-limit counters.
 

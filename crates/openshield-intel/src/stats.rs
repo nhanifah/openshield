@@ -29,6 +29,8 @@ const BOUNDS: [f64; 28] = [
 
 #[derive(Debug, Clone, Copy, Default, Serialize, PartialEq)]
 pub struct Counts {
+    /// All requests. Serialized as `requests` (the API contract's name).
+    #[serde(rename = "requests")]
     pub total: u64,
     pub pass: u64,
     pub allow: u64,

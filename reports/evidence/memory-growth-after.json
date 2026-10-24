@@ -1,0 +1,23 @@
+{
+  "tag": "after",
+  "points": [
+    {
+      "unique_keys": 0,
+      "rss_mb": 25.46875
+    },
+    {
+      "unique_keys": 100000,
+      "rss_mb": 32.640625
+    },
+    {
+      "unique_keys": 200000,
+      "rss_mb": 20.75
+    },
+    {
+      "unique_keys": 300000,
+      "rss_mb": 20.71875
+    }
+  ],
+  "growth_mb": -4.75,
+  "bytes_per_key": -16.602453333333333
+}

@@ -80,6 +80,7 @@
   function fmtMs(ms) {
     if (ms === null || ms === undefined || !isFinite(ms)) return '–';
     ms = Number(ms);
+    if (ms < 0.01) return '<0.01 ms';
     if (ms < 10) return ms.toFixed(ms < 1 ? 2 : 1) + ' ms';
     if (ms < 1000) return Math.round(ms) + ' ms';
     return (ms / 1000).toFixed(ms < 10000 ? 2 : 1) + ' s';
@@ -168,7 +169,9 @@
     if (!ai || typeof ai !== 'object') return h('span', { class: 'faint', text: '—' });
     const cat = str(ai.category) || 'unknown';
     const k = cat === 'malicious' ? 'block' : (cat === 'suspicious' || cat === 'policy_violation') ? 'suspicious' : cat === 'legitimate' ? 'pass' : 'unknown';
-    return h('span', { class: 'badge act-' + k, title: 'AI verdict (advisory). Risk ' + score(ai.risk) + ', confidence ' + score(ai.confidence) }, cat + (isFinite(ai.risk) && ai.risk !== null ? ' ' + pct(ai.risk) : ''));
+    const label = cat.replace(/_/g, ' ');
+    const risk = isFinite(ai.risk) && ai.risk !== null ? ' · risk ' + pct(ai.risk) : '';
+    return h('span', { class: 'badge act-' + k, title: 'AI verdict (advisory, never enforced). Category ' + label + ', risk ' + score(ai.risk) + ', confidence ' + score(ai.confidence) }, label + risk);
   }
   function anomalyText(x) {
     if (!isFinite(x) || x === null) return h('span', { class: 'faint', text: '—' });
@@ -187,6 +190,20 @@
   }
 
   // ------------------------------------------------------------------ small UI pieces
+  let alertToast = null, alertToastN = 0, alertToastTimer = 0;
+  function alertToastShow(text) {
+    const box = $('toasts');
+    alertToastN++;
+    if (!alertToast || !alertToast.isConnected) {
+      alertToast = h('div', { class: 'toast toast-warn', role: 'status' });
+      alertToastN = 1;
+      box.appendChild(alertToast);
+    }
+    alertToast.replaceChildren(h('span', { text: alertToastN === 1 ? text : alertToastN + ' new high-severity alerts' }), ' ',
+      h('a', { href: '#/alerts', text: 'View alerts' }));
+    clearTimeout(alertToastTimer);
+    alertToastTimer = setTimeout(() => { if (alertToast) alertToast.remove(); alertToast = null; alertToastN = 0; }, 6000);
+  }
   function toast(msg, kind, ms) {
     const box = $('toasts');
     const t = h('div', { class: 'toast toast-' + (kind || 'info'), role: kind === 'error' ? 'alert' : 'status', text: msg });
@@ -540,12 +557,20 @@
 
   // global stream consumers
   bus.stats.add((ticks) => { const t = ticks[ticks.length - 1]; $('rps-val').textContent = compact(t.total); });
+  // Alert messages also arrive when an existing alert is updated, so the
+  // badge is re-read from the API (debounced) rather than incremented.
+  let alertCountTimer = 0;
+  const seenAlertIds = new Set();
   bus.alert.add((alerts) => {
-    const fresh = alerts.filter((a) => a.status === 'open' || !a.status);
-    S.alertsOpen += fresh.length;
-    renderAlertCount();
-    const loud = fresh.filter((a) => a.severity === 'high' || a.severity === 'critical');
-    if (loud.length) toast((loud.length === 1 ? 'New ' + str(loud[0].severity) + ' alert: ' + str(loud[0].kind).replace(/_/g, ' ') + ' on ' + str(loud[0].subject) : loud.length + ' new high-severity alerts'), 'warn');
+    clearTimeout(alertCountTimer);
+    alertCountTimer = setTimeout(refreshAlertCount, 1200);
+    for (const a of alerts) {
+      if (seenAlertIds.has(a.id)) continue;
+      seenAlertIds.add(a.id);
+      if ((a.status === 'open' || !a.status) && (a.severity === 'high' || a.severity === 'critical')) {
+        alertToastShow('New ' + str(a.severity) + ' alert: ' + str(a.kind).replace(/_/g, ' ') + ' on ' + str(a.subject));
+      }
+    }
   });
   bus.ai.add((items) => {
     if (drawer.id && items.some((x) => str(x.event_id) === drawer.id)) { toast('AI verdict arrived for this event.', 'ok'); loadDrawer(); }
@@ -684,8 +709,10 @@
       empty.hidden = s.some((b) => (b.total || 0) > 0);
       if (!n) return;
       const vis = SERIES.map((a) => a[0]).filter((k) => !hidden.has(k));
+      // Lines on a shared axis, not stacked: stacking hides small series
+      // such as blocks under the pass volume.
       let max = 0;
-      for (const b of s) { let sum = 0; for (const k of vis) sum += Number(b[k]) || 0; if (sum > max) max = sum; }
+      for (const b of s) for (const k of vis) { const v = Number(b[k]) || 0; if (v > max) max = v; }
       const step = niceStep(max / 4), yMax = step * 4;
       const y = (v) => pad.t + ph - (v / yMax) * ph;
       g.font = '11px ' + colors.font;
@@ -705,24 +732,21 @@
         g.textAlign = i === 0 ? 'left' : i === ticks - 1 ? 'right' : 'center';
         g.fillText(axisLabel(s[idx].t, data.range_ms || 0), x(idx), hh - pad.b + 7);
       }
-      const base = new Float64Array(n);
-      const top = new Float64Array(n);
-      for (const k of vis) {
-        for (let i = 0; i < n; i++) top[i] = base[i] + (Number(s[i][k]) || 0);
-        const grad = g.createLinearGradient(0, pad.t, 0, pad.t + ph);
-        grad.addColorStop(0, colors[k]);
-        grad.addColorStop(1, colors[k]);
+      // Pass first, so the smaller and more important series sit on top.
+      for (const k of vis.slice().reverse()) {
+        const val = (i) => Number(s[i][k]) || 0;
         g.beginPath();
-        g.moveTo(x(0), y(top[0]));
-        for (let i = 1; i < n; i++) g.lineTo(x(i), y(top[i]));
-        for (let i = n - 1; i >= 0; i--) g.lineTo(x(i), y(base[i]));
+        g.moveTo(x(0), y(val(0)));
+        for (let i = 1; i < n; i++) g.lineTo(x(i), y(val(i)));
+        g.lineTo(x(n - 1), y(0));
+        g.lineTo(x(0), y(0));
         g.closePath();
-        g.globalAlpha = 0.3; g.fillStyle = grad; g.fill(); g.globalAlpha = 1;
+        g.globalAlpha = k === 'pass' ? 0.06 : 0.12; g.fillStyle = colors[k]; g.fill(); g.globalAlpha = 1;
         g.beginPath();
-        g.moveTo(x(0), y(top[0]));
-        for (let i = 1; i < n; i++) g.lineTo(x(i), y(top[i]));
-        g.strokeStyle = colors[k]; g.lineWidth = 1.6; g.stroke();
-        base.set(top);
+        g.moveTo(x(0), y(val(0)));
+        for (let i = 1; i < n; i++) g.lineTo(x(i), y(val(i)));
+        g.strokeStyle = colors[k]; g.lineWidth = k === 'pass' ? 1.5 : 2; g.lineJoin = 'round'; g.lineCap = 'round'; g.stroke();
+        if (n === 1) { g.beginPath(); g.arc(x(0), y(val(0)), 3, 0, Math.PI * 2); g.fillStyle = colors[k]; g.fill(); }
       }
       if (hover >= 0 && hover < n) {
         const xx = Math.round(x(hover)) + 0.5;
@@ -797,18 +821,22 @@
     const refresh = h('button', { type: 'button', class: 'btn btn-icon', 'aria-label': 'Refresh overview', onclick: () => load() }, icon('refresh'));
     root.append(pageHead('Overview', segmented(RANGES.map((r) => [r, r]), range, (v) => { range = v; store.set('localStorage', 'os-range', v); data = null; load(true); }, 'Time range'), updated, refresh));
 
+    // "Is anything wrong right now?" comes before any figure.
+    const status = h('div', { class: 'status-strip', role: 'status', 'aria-live': 'polite' });
+    root.appendChild(status);
     const KP = [
-      ['requests', 'Requests', 'var(--accent)'], ['block', 'Blocked', 'var(--c-block)'], ['challenge', 'Challenged', 'var(--c-challenge)'],
-      ['suspicious', 'Suspicious', 'var(--c-suspicious)'], ['rps', 'Current rps', 'var(--c-allow)'], ['p95', 'p95 latency', 'var(--c-neutral)'],
-      ['p99', 'p99 latency', 'var(--c-neutral)'], ['s5xx', '5xx errors', 'var(--c-high)'],
+      ['requests', 'Requests', 'var(--c-neutral)'], ['block', 'Blocked', 'var(--c-block)'], ['challenge', 'Challenged', 'var(--c-challenge)'],
+      ['suspicious', 'Suspicious', 'var(--c-suspicious)'], ['p95', 'Latency p95', 'var(--c-neutral)'], ['s5xx', '5xx errors', 'var(--c-high)'],
     ];
     const tiles = {};
     const kpis = h('div', { class: 'kpis' });
     for (const [k, label, c] of KP) {
       const val = h('div', { class: 'kpi-val', text: '–' });
       const sub = h('div', { class: 'kpi-sub', text: ' ' });
-      kpis.appendChild(cvar(h('div', { class: 'kpi', role: 'group', 'aria-label': label }, h('div', { class: 'kpi-label', text: label }), val, sub), c));
-      tiles[k] = { val, sub };
+      const win = h('span', { class: 'kpi-win' });
+      kpis.appendChild(cvar(h('div', { class: 'kpi', role: 'group', 'aria-label': label },
+        h('div', { class: 'kpi-label' }, h('span', { class: 'kpi-dot', 'aria-hidden': 'true' }), h('span', { text: label }), win), val, sub), c));
+      tiles[k] = { val, sub, win };
     }
     root.appendChild(kpis);
 
@@ -820,9 +848,9 @@
     chartCard.body.appendChild(chart.el);
     root.appendChild(chartCard.el);
 
-    const ips = card('Top client IPs', { flush: true });
+    const ips = card('Top clients', { flush: true });
     const paths = card('Top paths', { flush: true });
-    const rules = card('Top rules', { flush: true });
+    const rules = card('Rules matched', { flush: true });
     const codes = card('Status codes');
     const methods = card('Methods');
     const countries = card('Countries');
@@ -855,20 +883,49 @@
     function renderKpis() {
       const t = data.totals, lat = data.latency_ms || {};
       const req = t.requests;
-      const set = (k, v, sub, title) => { tiles[k].val.textContent = v; tiles[k].sub.textContent = sub || ' '; tiles[k].val.title = title || ''; };
-      set('requests', compact(req), fmtBytes(t.bytes_in) + ' in · ' + fmtBytes(t.bytes_out) + ' out', full(req));
-      set('block', compact(t.block), pct(ratio(t.block, req), 1) + ' of requests', full(t.block));
-      set('challenge', compact(t.challenge), pct(ratio(t.challenge, req), 1) + ' of requests', full(t.challenge));
-      set('suspicious', compact(t.suspicious), 'anomaly ≥ 0.5 or AI flagged', full(t.suspicious));
-      set('rps', compact(data.rps_current), data.live_p95 !== undefined ? 'live p95 ' + fmtMs(data.live_p95) : 'requests / second');
-      set('p95', fmtMs(lat.p95), 'p50 ' + fmtMs(lat.p50));
-      set('p99', fmtMs(lat.p99), 'over ' + range);
-      set('s5xx', compact(t.status_5xx), pct(ratio(t.status_5xx, req), 2) + ' of requests', full(t.status_5xx));
+      const share = (v) => req > 0 ? pct(ratio(v, req), v / req < 0.1 ? 1 : 0) + ' of requests' : 'no requests yet';
+      const set = (k, v, sub, title) => { tiles[k].val.textContent = v; tiles[k].sub.textContent = sub || ' '; tiles[k].val.title = title || ''; tiles[k].win.textContent = 'last ' + range; };
+      set('requests', compact(req), compact(data.rps_current) + ' req/s now · ' + fmtBytes(t.bytes_out) + ' sent', full(req) + ' requests');
+      set('block', compact(t.block), share(t.block), full(t.block));
+      set('challenge', compact(t.challenge), share(t.challenge), full(t.challenge));
+      set('suspicious', compact(t.suspicious), 'anomaly ≥ 0.5 or AI-flagged', full(t.suspicious));
+      set('p95', fmtMs(lat.p95), 'p50 ' + fmtMs(lat.p50) + ' · p99 ' + fmtMs(lat.p99));
+      set('s5xx', compact(t.status_5xx), share(t.status_5xx), full(t.status_5xx));
+    }
+    function renderStatus() {
+      const items = [];
+      const al = data.alerts_open || {};
+      const crit = al.critical || 0, high = al.high || 0, med = al.medium || 0, low = al.low || 0;
+      let level = 'ok';
+      const raise = (l) => { if (l === 'bad' || level === 'ok') level = l; };
+      if (crit || high) {
+        raise('bad');
+        items.push(['bad', (crit ? crit + ' critical' + (high ? ' and ' : '') : '') + (high ? high + ' high' : '') + ' alert' + (crit + high === 1 ? '' : 's') + ' open', '#/alerts']);
+      } else if (med || low) {
+        raise('warn');
+        items.push(['warn', (med + low) + ' lower-severity alert' + (med + low === 1 ? '' : 's') + ' open', '#/alerts']);
+      }
+      if (data.detection_only) { raise('warn'); items.push(['warn', 'Monitoring-only mode: rules log but do not block', '#/policy']); }
+      const ai = data.ai || {};
+      if (ai.state === 'open') { raise('warn'); items.push(['warn', 'AI analysis paused (provider failing); rules still enforce', '#/ai']); }
+      else if (ai.state === 'degraded') items.push(['warn', 'AI analysis degraded', '#/ai']);
+      const pl = data.pipeline || {};
+      const lost = (pl.dropped || 0) + (pl.store_dropped || 0);
+      if (lost > 0) { raise('warn'); items.push(['warn', compact(lost) + ' events not recorded (queue full)', null]); }
+      status.dataset.level = level;
+      const head = level === 'ok' ? 'All clear' : level === 'bad' ? 'Needs attention' : 'Check';
+      const kids = [h('span', { class: 'status-icon', 'aria-hidden': 'true' }), h('strong', { text: head })];
+      if (!items.length) kids.push(h('span', { class: 'muted', text: 'No open alerts. Rules enforcing' + (ai.state && ai.state !== 'disabled' ? ', AI analysis running.' : '.') }));
+      for (const [lvl, text, href] of items) kids.push(href ? h('a', { class: 'status-item status-' + lvl, href, text }) : h('span', { class: 'status-item status-' + lvl, text }));
+      kids.push(h('span', { class: 'status-meta faint', text: 'Policy v' + str(data.policy_version) }));
+      status.replaceChildren.apply(status, kids);
     }
     function renderAll() {
       updated.textContent = 'Updated ' + clock(data.now || Date.now()).slice(0, 8);
       bucketNote.textContent = 'requests per ' + fmtDur(data.bucket_ms || 60000).replace(/ 0s$/, '') + ' bucket';
+      renderStatus();
       renderKpis();
+      if (data.alerts_open && isFinite(data.alerts_open.open)) { S.alertsOpen = data.alerts_open.open; renderAlertCount(); }
       chart.set(data);
       const tipIps = Array.isArray(data.top_ips) ? data.top_ips : [];
       ips.body.replaceChildren(tipIps.length ? table([
@@ -1204,6 +1261,7 @@
     drawer.opener = opener || document.activeElement;
     $('drawer').hidden = false;
     $('drawer-scrim').hidden = false;
+    document.body.classList.add('drawer-open');
     $('drawer-title').textContent = 'Event ' + shortId(id);
     loadDrawer();
     $('drawer-close').focus();
@@ -1212,6 +1270,7 @@
     if ($('drawer').hidden) return;
     $('drawer').hidden = true;
     $('drawer-scrim').hidden = true;
+    document.body.classList.remove('drawer-open');
     drawer.id = null; drawer.seq++;
     $('drawer-body').replaceChildren();
     const o = drawer.opener;
@@ -1233,6 +1292,18 @@
     body.replaceChildren.apply(body, eventDetail(ev));
     body.scrollTop = st;
   }
+  function whyText(ev) {
+    const mr = Array.isArray(ev.matched_rules) ? ev.matched_rules : [];
+    const term = mr.filter((r) => r && ['block', 'challenge', 'allow'].indexOf(r.action) >= 0);
+    const by = term.length ? term[term.length - 1].id : null;
+    const note = ev.enforced === false ? ' Monitoring-only mode: this was not enforced.' : '';
+    if (by === 'dynamic:ip_block') return 'Blocked by a dynamic IP block on ' + str(ev.client_ip) + ', before any rule ran.';
+    if (ev.action === 'block') return 'Blocked by rule ' + str(by || '(unknown)') + '.' + note;
+    if (ev.action === 'challenge') return 'Challenged by rule ' + str(by || '(unknown)') + ': the client must pass Turnstile.' + note;
+    if (ev.action === 'allow') return 'Allowed by rule ' + str(by || '(unknown)') + '; later phases still ran.';
+    if (mr.length) return 'Passed. Logged or scored by ' + mr.map((r) => str(r.id)).join(', ') + '.';
+    return 'Passed: no rule matched.';
+  }
   function section(title, extra) {
     const s = h('section', { class: 'section', 'aria-label': title }, h('h3', null, title, extra || null));
     return s;
@@ -1240,9 +1311,18 @@
   function eventDetail(ev) {
     const out = [];
     const reqText = str(ev.method) + ' ' + str(ev.host) + str(ev.path) + (ev.query ? '?' + str(ev.query) : '') + (ev.protocol ? ' ' + str(ev.protocol) : '');
+    let decoded = reqText;
+    try { decoded = decodeURIComponent(reqText.replace(/\+/g, ' ')); } catch (e) { /* keep raw */ }
     out.push(h('div', { class: 'row' }, actionBadge(ev.action), h('span', { class: 'badge plain', text: 'HTTP ' + (str(ev.status) || '?') }),
       ev.label ? labelBadge(ev.label) : null, timeEl(ev.ts), h('span', { class: 'faint', text: fmtMs(ev.duration_ms) })));
-    out.push(h('div', { class: 'reqline', text: reqText }));
+    out.push(h('p', { class: 'why why-' + (ACTIONS.indexOf(ev.action) >= 0 ? ev.action : 'pass'), text: whyText(ev) }));
+    const reqEl = h('div', { class: 'reqline', text: decoded });
+    out.push(reqEl);
+    if (decoded !== reqText) {
+      const tg = h('button', { type: 'button', class: 'btn btn-sm', text: 'Show raw', 'aria-pressed': 'false' });
+      tg.addEventListener('click', () => { const raw = tg.getAttribute('aria-pressed') !== 'true'; tg.setAttribute('aria-pressed', String(raw)); tg.textContent = raw ? 'Show decoded' : 'Show raw'; reqEl.textContent = raw ? reqText : decoded; });
+      out.push(h('div', { class: 'row' }, h('span', { class: 'faint', text: 'Shown URL-decoded.' }), tg));
+    }
 
     // decision
     const dec = section('Decision');
@@ -1411,6 +1491,16 @@
         render();
       } catch (e) { if (ctx.alive && e.status !== 401) list.replaceChildren(stateBox('error', e.message)); }
     }
+    const KIND = { rate_spike: 'Rate spike', scanning: 'Scanning', attack_burst: 'Attack burst', error_burst: 'Error burst',
+      traffic_spike: 'Traffic spike', ai_malicious: 'AI flagged allowed traffic', ai_degraded: 'AI analysis degraded' };
+    function alertKind(k) { return KIND[k] || str(k).replace(/_/g, ' '); }
+    function alertReason(a) {
+      const d = a.detail && typeof a.detail === 'object' ? a.detail : {};
+      if (d.reason) return str(d.reason);
+      if (d.explanation) return 'AI (advisory): ' + str(d.explanation);
+      if (d.note) return str(d.note);
+      return detailText(d);
+    }
     function subject(a) {
       const s = str(a.subject);
       if (looksLikeIp(s)) return filterLink(s, { ip: s });
@@ -1419,16 +1509,18 @@
     }
     function render() {
       if (!alerts) return;
-      const rows = alerts.filter((a) => sev === 'all' || a.severity === sev);
+      const rank = { critical: 3, high: 2, medium: 1, low: 0 };
+      const rows = alerts.filter((a) => sev === 'all' || a.severity === sev)
+        .sort((a, b) => (rank[b.severity] || 0) - (rank[a.severity] || 0) || (b.last_ts || b.ts || 0) - (a.last_ts || a.ts || 0));
       if (!rows.length) { list.replaceChildren(stateBox('empty', status === 'open' ? 'No open alerts. All quiet.' : 'No alerts match.')); return; }
       const cols = [
         { label: 'Severity', render: (a) => sevBadge(a.severity) },
-        { label: 'Kind', render: (a) => str(a.kind).replace(/_/g, ' ') },
-        { label: 'Subject', cls: 'cell-path', render: subject },
-        { label: 'Count', num: true, render: (a) => compact(a.count) },
-        { label: 'Raised', render: (a) => timeEl(a.ts) },
-        { label: 'Status', render: (a) => stBadge(a.status) },
-        { label: 'Detail', cls: 'wrap', render: (a) => h('span', { class: 'mono muted', text: detailText(a.detail) }) },
+        { label: 'Alert', cls: 'wrap', render: (a) => h('div', { class: 'alert-what' },
+          h('div', null, h('strong', { text: alertKind(a.kind) }), ' · ', subject(a)),
+          h('div', { class: 'muted', text: alertReason(a) })) },
+        { label: 'Seen', num: true, render: (a) => h('span', { title: 'Times this alert fired while open', text: compact(a.count) + '×' }) },
+        { label: 'Last seen', render: (a) => timeEl(a.last_ts || a.ts) },
+        { label: 'Status', render: (a) => stBadge(a.status, a.status === 'ack' ? 'acknowledged' : null) },
         { label: '', cls: 'actions', render: actions },
       ];
       const tbl = table(cols, [], { caption: 'Alerts' });

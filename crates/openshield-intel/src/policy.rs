@@ -95,6 +95,96 @@ pub fn sha256_hex(s: &str) -> String {
     hex::encode(Sha256::digest(s.as_bytes()))
 }
 
+/// Placeholder sent instead of a secret value. Sending it back means "keep
+/// the current value".
+pub const SECRET_PLACEHOLDER: &str = "__secret_unchanged__";
+
+/// Keys whose values are secrets: the Turnstile secret, the challenge
+/// cookie key, and the private and symmetric members of JWKs.
+const SECRET_KEYS: &[&str] = &["turnstile_secret_key", "cookie_secret", "k", "d", "p", "q", "dp", "dq", "qi"];
+
+fn walk_secrets(v: &mut serde_yaml::Value, path: &mut Vec<String>, f: &mut dyn FnMut(&[String], &mut serde_yaml::Value)) {
+    match v {
+        serde_yaml::Value::Mapping(m) => {
+            for (k, val) in m.iter_mut() {
+                let key = k.as_str().unwrap_or("").to_string();
+                path.push(key.clone());
+                if SECRET_KEYS.contains(&key.as_str()) && val.is_string() {
+                    f(path, val);
+                } else {
+                    walk_secrets(val, path, f);
+                }
+                path.pop();
+            }
+        }
+        serde_yaml::Value::Sequence(items) => {
+            for (i, item) in items.iter_mut().enumerate() {
+                path.push(format!("[{i}]"));
+                walk_secrets(item, path, f);
+                path.pop();
+            }
+        }
+        _ => {}
+    }
+}
+
+fn lookup<'a>(v: &'a serde_yaml::Value, path: &[String]) -> Option<&'a serde_yaml::Value> {
+    let mut cur = v;
+    for p in path {
+        cur = if let Some(i) = p.strip_prefix('[').and_then(|x| x.strip_suffix(']')) {
+            cur.as_sequence()?.get(i.parse::<usize>().ok()?)?
+        } else {
+            cur.as_mapping()?.get(serde_yaml::Value::String(p.clone()))?
+        };
+    }
+    Some(cur)
+}
+
+/// The policy with secret values replaced by [`SECRET_PLACEHOLDER`], for
+/// anything shown to people. Policies without secrets come back unchanged.
+pub fn mask_secrets(yaml: &str) -> String {
+    let Ok(mut v) = serde_yaml::from_str::<serde_yaml::Value>(yaml) else {
+        return yaml.to_string();
+    };
+    let mut changed = false;
+    walk_secrets(&mut v, &mut Vec::new(), &mut |_, val| {
+        *val = serde_yaml::Value::String(SECRET_PLACEHOLDER.into());
+        changed = true;
+    });
+    if changed {
+        serde_yaml::to_string(&v).unwrap_or_else(|_| yaml.to_string())
+    } else {
+        yaml.to_string()
+    }
+}
+
+/// Put the current secret values back where a candidate still holds the
+/// placeholder. A placeholder with no current value at that place is an
+/// error: the editor moved or added a secret without giving its value.
+pub fn restore_secrets(candidate: &str, current: &str) -> Result<String, String> {
+    if !candidate.contains(SECRET_PLACEHOLDER) {
+        return Ok(candidate.to_string());
+    }
+    let mut v: serde_yaml::Value = serde_yaml::from_str(candidate).map_err(|e| format!("invalid YAML: {e}"))?;
+    let cur: serde_yaml::Value = serde_yaml::from_str(current).unwrap_or(serde_yaml::Value::Null);
+    let mut missing = Vec::new();
+    walk_secrets(&mut v, &mut Vec::new(), &mut |path, val| {
+        if val.as_str() == Some(SECRET_PLACEHOLDER) {
+            match lookup(&cur, path).filter(|x| x.as_str() != Some(SECRET_PLACEHOLDER)) {
+                Some(orig) => *val = orig.clone(),
+                None => missing.push(path.join(".")),
+            }
+        }
+    });
+    if !missing.is_empty() {
+        return Err(format!(
+            "no current value for masked secret(s) {}; enter the value instead of {SECRET_PLACEHOLDER}",
+            missing.join(", ")
+        ));
+    }
+    serde_yaml::to_string(&v).map_err(|e| e.to_string())
+}
+
 /// Extract the WAF keys of a full proxy config as a YAML document.
 pub fn waf_yaml_from_config_file(full_yaml: &str) -> Result<String, String> {
     let v: serde_yaml::Value = serde_yaml::from_str(full_yaml).map_err(|e| e.to_string())?;
@@ -183,11 +273,17 @@ impl PolicyManager {
         self.active.lock().version
     }
 
+    /// The active policy as stored, secrets included. Never send to clients.
+    pub fn current_yaml(&self) -> String {
+        self.active.lock().yaml.clone()
+    }
+
+    /// The active policy for display: secrets masked.
     pub fn info(&self) -> serde_json::Value {
         let a = self.active.lock();
         serde_json::json!({
             "version": a.version,
-            "yaml": a.yaml,
+            "yaml": mask_secrets(&a.yaml),
             "applied_at": a.applied_at,
             "actor": a.actor,
             "source": a.source,
@@ -392,6 +488,31 @@ mod tests {
         assert_eq!(sim.diffs[0].path, "/abc");
         assert_eq!(sim.current["block"], 1);
         assert_eq!(sim.candidate["block"], 2);
+    }
+
+    #[test]
+    fn secrets_are_masked_and_restored() {
+        let full = "challenge:\n  turnstile_site_key: site\n  turnstile_secret_key: TOPSECRET\n  cookie_secret: COOKIEKEY\nrulesets: []\n";
+        let masked = mask_secrets(full);
+        assert!(!masked.contains("TOPSECRET") && !masked.contains("COOKIEKEY"), "{masked}");
+        assert!(masked.contains("site"), "non-secret values stay");
+        let edited = masked.replace("site\n", "site2\n");
+        let restored = restore_secrets(&edited, full).unwrap();
+        assert!(restored.contains("TOPSECRET") && restored.contains("COOKIEKEY") && restored.contains("site2"));
+        // A placeholder where the current policy has no secret is refused.
+        let moved = "challenge:\n  turnstile_site_key: s\n  turnstile_secret_key: __secret_unchanged__\n  cookie_secret: x\n";
+        assert!(restore_secrets(moved, "rulesets: []\n").is_err());
+        // Policies without secrets keep their formatting.
+        assert_eq!(mask_secrets(BASE), BASE);
+    }
+
+    #[test]
+    fn info_never_contains_secrets() {
+        let yaml = format!("{BASE}challenge:\n  turnstile_site_key: s\n  turnstile_secret_key: TOPSECRET\n  cookie_secret: COOKIEKEY\n");
+        let pm = PolicyManager::init(&yaml, None).unwrap();
+        let info = pm.info().to_string();
+        assert!(!info.contains("TOPSECRET") && !info.contains("COOKIEKEY"));
+        assert!(pm.current_yaml().contains("TOPSECRET"));
     }
 
     #[test]

@@ -609,6 +609,28 @@ impl Store {
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(e)
     }
 
+    /// Alerts not yet resolved (open or acknowledged), by severity.
+    pub fn unresolved_alert_counts(&self) -> Result<std::collections::BTreeMap<String, i64>> {
+        let c = self.read.lock();
+        let mut st = c
+            .prepare("SELECT severity, status, COUNT(*) FROM alerts WHERE status != 'resolved' GROUP BY severity, status")
+            .map_err(e)?;
+        let rows = st
+            .query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, i64>(2)?)))
+            .map_err(e)?;
+        let mut out = std::collections::BTreeMap::new();
+        for row in rows {
+            let (sev, status, n) = row.map_err(e)?;
+            if status == "open" {
+                *out.entry(sev).or_insert(0) += n;
+                *out.entry("open".into()).or_insert(0) += n;
+            } else {
+                *out.entry("acknowledged".into()).or_insert(0) += n;
+            }
+        }
+        Ok(out)
+    }
+
     pub fn get_alert(&self, id: i64) -> Result<Option<Alert>> {
         let c = self.read.lock();
         c.query_row(&format!("{ALERT_COLS} WHERE id = ?1"), [id], alert_row)

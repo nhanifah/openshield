@@ -511,7 +511,10 @@ pub fn candidate_label(ev: &SecurityEvent, v: &AiVerdict) -> Option<&'static str
         Category::Malicious if !blocked => Some("FALSE_NEGATIVE"),
         Category::Legitimate if v.status == VerdictStatus::NeedsReview => Some("NEEDS_REVIEW"),
         Category::Legitimate => None,
-        Category::Malicious => Some("MALICIOUS_CONFIRMED"),
+        // Agreement with a rule block adds nothing for a reviewer; only flag
+        // it when the verdict itself needs review.
+        Category::Malicious if v.status == VerdictStatus::NeedsReview => Some("NEEDS_REVIEW"),
+        Category::Malicious => None,
         Category::Suspicious => Some("SUSPICIOUS"),
         Category::PolicyViolation => Some("POLICY_VIOLATION"),
         Category::Unknown => Some("NEEDS_REVIEW"),
@@ -662,7 +665,9 @@ mod tests {
         assert_eq!(candidate_label(&blocked, &verdict(Category::Legitimate, VerdictStatus::Ok)), Some("FALSE_POSITIVE"));
         assert_eq!(candidate_label(&passed, &verdict(Category::Malicious, VerdictStatus::Ok)), Some("FALSE_NEGATIVE"));
         assert_eq!(candidate_label(&passed, &verdict(Category::Legitimate, VerdictStatus::Ok)), None);
-        assert_eq!(candidate_label(&blocked, &verdict(Category::Malicious, VerdictStatus::Ok)), Some("MALICIOUS_CONFIRMED"));
+        // Agreement with a block is not queued for review.
+        assert_eq!(candidate_label(&blocked, &verdict(Category::Malicious, VerdictStatus::Ok)), None);
+        assert_eq!(candidate_label(&blocked, &verdict(Category::Malicious, VerdictStatus::NeedsReview)), Some("NEEDS_REVIEW"));
     }
 
     #[test]

@@ -278,6 +278,9 @@ async fn overview(State(app): S, _c: Caller, Query(q): Query<RangeQ>) -> ApiResu
         None => json!({"state": "disabled"}),
     };
     v["pipeline"] = serde_json::to_value(app.hub.status()).map_err(ApiError::internal)?;
+    v["alerts_open"] = json!(app.hub.store.unresolved_alert_counts().map_err(ApiError::internal)?);
+    v["detection_only"] = json!(app.policy.detection_only());
+    v["policy_version"] = json!(app.policy.version());
     ok(v)
 }
 
@@ -668,7 +671,8 @@ async fn policy_versions(State(app): S, _c: Caller) -> ApiResult {
 
 async fn policy_version(State(app): S, _c: Caller, Path(v): Path<i64>) -> ApiResult {
     let p = app.hub.store.policy_version(v).map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
-    ok(json!({"version": p.version, "yaml": p.yaml, "ts": p.ts, "actor": p.actor, "comment": p.comment, "source": p.source}))
+    let yaml = p.yaml.as_deref().map(crate::policy::mask_secrets);
+    ok(json!({"version": p.version, "yaml": yaml, "ts": p.ts, "actor": p.actor, "comment": p.comment, "source": p.source}))
 }
 
 #[derive(Deserialize)]
@@ -680,12 +684,21 @@ struct YamlBody {
 
 const MAX_POLICY: usize = 512 * 1024;
 
-async fn policy_validate(State(_app): S, c: Caller, Json(b): Json<YamlBody>) -> ApiResult {
-    c.require(Role::Admin)?;
-    if b.yaml.len() > MAX_POLICY {
+/// The candidate with masked secrets filled in from the active policy.
+fn unmask(app: &App, yaml: &str) -> Result<String, ApiError> {
+    if yaml.len() > MAX_POLICY {
         return Err(ApiError::bad("policy is too large"));
     }
-    let r = tokio::task::spawn_blocking(move || crate::policy::compile(&b.yaml).map(|(_, w)| w.rule_count()))
+    crate::policy::restore_secrets(yaml, &app.policy.current_yaml()).map_err(ApiError::bad)
+}
+
+async fn policy_validate(State(app): S, c: Caller, Json(b): Json<YamlBody>) -> ApiResult {
+    c.require(Role::Admin)?;
+    let yaml = match unmask(&app, &b.yaml) {
+        Ok(y) => y,
+        Err(e) => return ok(json!({"ok": false, "error": e.1})),
+    };
+    let r = tokio::task::spawn_blocking(move || crate::policy::compile(&yaml).map(|(_, w)| w.rule_count()))
         .await
         .map_err(ApiError::internal)?;
     match r {
@@ -696,12 +709,10 @@ async fn policy_validate(State(_app): S, c: Caller, Json(b): Json<YamlBody>) -> 
 
 async fn policy_simulate(State(app): S, c: Caller, Json(b): Json<YamlBody>) -> ApiResult {
     c.require(Role::Admin)?;
-    if b.yaml.len() > MAX_POLICY {
-        return Err(ApiError::bad("policy is too large"));
-    }
+    let yaml = unmask(&app, &b.yaml)?;
     let snaps = app.hub.snapshots();
     let policy = Arc::clone(&app.policy);
-    let r = tokio::task::spawn_blocking(move || policy.simulate(&b.yaml, &snaps))
+    let r = tokio::task::spawn_blocking(move || policy.simulate(&yaml, &snaps))
         .await
         .map_err(ApiError::internal)?;
     audit(&app, &c, "policy_simulate", "-", json!({"ok": r.is_ok()}), "ok");
@@ -715,11 +726,9 @@ fn do_apply(app: &App, yaml: &str, actor: &str, comment: &str) -> Result<i64, St
     app.policy.apply(yaml, actor, comment, Some(&app.hub.store))
 }
 
-async fn policy_apply(State(app): S, c: Caller, Json(b): Json<YamlBody>) -> ApiResult {
+async fn policy_apply(State(app): S, c: Caller, Json(mut b): Json<YamlBody>) -> ApiResult {
     c.require(Role::Admin)?;
-    if b.yaml.len() > MAX_POLICY {
-        return Err(ApiError::bad("policy is too large"));
-    }
+    b.yaml = unmask(&app, &b.yaml)?;
     if b.comment.trim().is_empty() {
         return Err(ApiError::bad("a comment is required"));
     }

@@ -382,6 +382,9 @@ impl Transaction {
                     self.finalize_response_body();
                     self.evaluate(&Phase::ResponseBody);
                 }
+            } else {
+                // Not inspected, but still counted for the access log.
+                self.res.buffer.total_size += data.len();
             }
             return BodyVerdict::Passthrough;
         }
@@ -1020,6 +1023,21 @@ challenge:
             BodyVerdict::Passthrough
         );
         assert_eq!(tx.action(), "pass");
+    }
+
+    #[test]
+    fn bytes_sent_are_counted_without_response_inspection() {
+        // Regression: bytes_sent was always 0 unless inspect_response_body.
+        let mut tx = waf("", BLOCK_ADMIN).transaction();
+        tx.request_headers(request("/", &[]));
+        tx.response_body_chunk(b"hello", false);
+        tx.response_body_chunk(b"!", true);
+        let record = tx.finish(ResponseOutcome {
+            status: 200,
+            headers: None,
+            error: None,
+        });
+        assert_eq!(record.access.bytes_sent, 6);
     }
 
     #[test]
