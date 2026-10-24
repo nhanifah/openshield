@@ -1,0 +1,1163 @@
+{
+  "meta": {
+    "tag": "ab",
+    "time": "2026-10-24T21:29:38Z",
+    "machine": "arm64 macOS-26.5-arm64-arm-64bit",
+    "cpu_count": 10,
+    "rounds": 5,
+    "duration_s": 10,
+    "connections": 64,
+    "proxy_workers": 4,
+    "baseline_bin": "/private/tmp/claude-501/-Users-alfi-Documents-GitHub-openshield/94d8ed58-437d-4860-ae01-272d367ec078/scratchpad/baseline-wt/target/release/openshield",
+    "method": "variants interleaved per round, order rotated each round; medians across rounds",
+    "git": "2b8b5f6"
+  },
+  "summary": [
+    {
+      "scenario": "direct_upstream_get",
+      "variant": "upstream_direct",
+      "n": 5,
+      "rps": 142826.10212715762,
+      "p50_ms": 0.300625,
+      "p95_ms": 1.098583,
+      "p99_ms": 2.902375,
+      "cpu_pct_avg": null,
+      "rss_mb_max": null,
+      "rps_min": 118490.73055323595,
+      "rps_max": 149089.65597868676
+    },
+    {
+      "scenario": "proxy_norules_get",
+      "variant": "baseline",
+      "n": 5,
+      "rps": 38810.003558580465,
+      "p50_ms": 1.4068749999999999,
+      "p95_ms": 3.456791,
+      "p99_ms": 6.412167,
+      "cpu_pct_avg": 247.915,
+      "rss_mb_max": 37.875,
+      "rps_min": 31444.830071180553,
+      "rps_max": 39280.98371569855
+    },
+    {
+      "scenario": "proxy_norules_get",
+      "variant": "current",
+      "n": 5,
+      "rps": 39373.72413518595,
+      "p50_ms": 1.3804589999999999,
+      "p95_ms": 3.318542,
+      "p99_ms": 5.833042,
+      "cpu_pct_avg": 256.28,
+      "rss_mb_max": 32.328125,
+      "rps_min": 34988.24650755553,
+      "rps_max": 39929.726232956375
+    },
+    {
+      "scenario": "proxy_norules_get",
+      "variant": "current_intel",
+      "n": 5,
+      "rps": 27093.986294571256,
+      "p50_ms": 1.933459,
+      "p95_ms": 5.091875,
+      "p99_ms": 9.28275,
+      "cpu_pct_avg": 310.44,
+      "rss_mb_max": 193.96875,
+      "rps_min": 21532.149220590454,
+      "rps_max": 28980.997828159572
+    },
+    {
+      "scenario": "proxy_rules_benign_get",
+      "variant": "baseline",
+      "n": 5,
+      "rps": 32493.03870253013,
+      "p50_ms": 1.683166,
+      "p95_ms": 3.945166,
+      "p99_ms": 6.760375,
+      "cpu_pct_avg": 259.6,
+      "rss_mb_max": 38.84375,
+      "rps_min": 28244.33491834827,
+      "rps_max": 32905.23939549764
+    },
+    {
+      "scenario": "proxy_rules_benign_get",
+      "variant": "current",
+      "n": 5,
+      "rps": 32280.289360728573,
+      "p50_ms": 1.707959,
+      "p95_ms": 3.9497079999999998,
+      "p99_ms": 6.605208,
+      "cpu_pct_avg": 266.205,
+      "rss_mb_max": 32.578125,
+      "rps_min": 27839.395116582564,
+      "rps_max": 33809.39604904894
+    },
+    {
+      "scenario": "proxy_rules_benign_get",
+      "variant": "current_intel",
+      "n": 5,
+      "rps": 23353.46099306173,
+      "p50_ms": 2.327625,
+      "p95_ms": 5.649084,
+      "p99_ms": 9.948125000000001,
+      "cpu_pct_avg": 333.46,
+      "rss_mb_max": 162.78125,
+      "rps_min": 18396.65160997554,
+      "rps_max": 24624.65891466147
+    },
+    {
+      "scenario": "proxy_rules_attack_get",
+      "variant": "baseline",
+      "n": 5,
+      "rps": 52487.12091711638,
+      "p50_ms": 1.064041,
+      "p95_ms": 2.348958,
+      "p99_ms": 4.259667,
+      "cpu_pct_avg": 252.25,
+      "rss_mb_max": 35.0,
+      "rps_min": 48223.44710011796,
+      "rps_max": 54503.66275011153
+    },
+    {
+      "scenario": "proxy_rules_attack_get",
+      "variant": "current",
+      "n": 5,
+      "rps": 54319.83210006491,
+      "p50_ms": 1.0147920000000001,
+      "p95_ms": 2.3562079999999996,
+      "p99_ms": 4.200125,
+      "cpu_pct_avg": 249.685,
+      "rss_mb_max": 31.0,
+      "rps_min": 52784.08081522311,
+      "rps_max": 57637.21007763344
+    },
+    {
+      "scenario": "proxy_rules_attack_get",
+      "variant": "current_intel",
+      "n": 5,
+      "rps": 34352.84001434063,
+      "p50_ms": 1.466042,
+      "p95_ms": 4.299459000000001,
+      "p99_ms": 8.195875000000001,
+      "cpu_pct_avg": 310.9952380952381,
+      "rss_mb_max": 361.421875,
+      "rps_min": 31054.14814549855,
+      "rps_max": 37963.095569136916
+    },
+    {
+      "scenario": "proxy_rules_form_post",
+      "variant": "baseline",
+      "n": 5,
+      "rps": 23098.779913418184,
+      "p50_ms": 2.469125,
+      "p95_ms": 5.383708,
+      "p99_ms": 8.493374999999999,
+      "cpu_pct_avg": 301.275,
+      "rss_mb_max": 41.265625,
+      "rps_min": 22030.516399365075,
+      "rps_max": 23294.23091465369
+    },
+    {
+      "scenario": "proxy_rules_form_post",
+      "variant": "current",
+      "n": 5,
+      "rps": 24029.912644448512,
+      "p50_ms": 2.355542,
+      "p95_ms": 5.081125,
+      "p99_ms": 8.516417,
+      "cpu_pct_avg": 304.295,
+      "rss_mb_max": 38.296875,
+      "rps_min": 21530.982431417768,
+      "rps_max": 25327.40149084282
+    },
+    {
+      "scenario": "proxy_rules_form_post",
+      "variant": "current_intel",
+      "n": 5,
+      "rps": 17981.770673902916,
+      "p50_ms": 3.0669999999999997,
+      "p95_ms": 7.2289579999999996,
+      "p99_ms": 12.173125,
+      "cpu_pct_avg": 338.615,
+      "rss_mb_max": 95.96875,
+      "rps_min": 16216.708531526512,
+      "rps_max": 18110.287848174452
+    }
+  ],
+  "runs": [
+    {
+      "round": 0,
+      "scenario": "direct_upstream_get",
+      "variant": "upstream_direct",
+      "rps": 122932.2826079393,
+      "success_rate": 1.0,
+      "p50_ms": 0.335084,
+      "p95_ms": 1.3115830000000002,
+      "p99_ms": 3.4485829999999997,
+      "cpu_pct_avg": null,
+      "rss_mb_max": null,
+      "status_codes": {
+        "200": 1229993
+      }
+    },
+    {
+      "round": 0,
+      "scenario": "proxy_norules_get",
+      "variant": "baseline",
+      "rps": 33564.44348833204,
+      "success_rate": 1.0,
+      "p50_ms": 1.5611659999999998,
+      "p95_ms": 4.180375,
+      "p99_ms": 7.573125,
+      "cpu_pct_avg": 234.11,
+      "rss_mb_max": 32.4375,
+      "status_codes": {
+        "200": 335698
+      }
+    },
+    {
+      "round": 0,
+      "scenario": "proxy_norules_get",
+      "variant": "current",
+      "rps": 34988.24650755553,
+      "success_rate": 1.0,
+      "p50_ms": 1.5315839999999998,
+      "p95_ms": 3.755375,
+      "p99_ms": 6.3517909999999995,
+      "cpu_pct_avg": 239.945,
+      "rss_mb_max": 30.796875,
+      "status_codes": {
+        "200": 349944
+      }
+    },
+    {
+      "round": 0,
+      "scenario": "proxy_norules_get",
+      "variant": "current_intel",
+      "rps": 22852.505832110066,
+      "success_rate": 1.0,
+      "p50_ms": 2.221875,
+      "p95_ms": 6.173584,
+      "p99_ms": 11.088459,
+      "cpu_pct_avg": 284.035,
+      "rss_mb_max": 157.796875,
+      "status_codes": {
+        "200": 228542
+      }
+    },
+    {
+      "round": 0,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "baseline",
+      "rps": 28244.33491834827,
+      "success_rate": 1.0,
+      "p50_ms": 1.843,
+      "p95_ms": 4.949707999999999,
+      "p99_ms": 8.974167,
+      "cpu_pct_avg": 245.275,
+      "rss_mb_max": 38.84375,
+      "status_codes": {
+        "200": 282495
+      }
+    },
+    {
+      "round": 0,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "current",
+      "rps": 27839.395116582564,
+      "success_rate": 1.0,
+      "p50_ms": 1.855375,
+      "p95_ms": 5.025957999999999,
+      "p99_ms": 9.871542,
+      "cpu_pct_avg": 230.84,
+      "rss_mb_max": 32.578125,
+      "status_codes": {
+        "200": 278421
+      }
+    },
+    {
+      "round": 0,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "current_intel",
+      "rps": 18396.65160997554,
+      "success_rate": 1.0,
+      "p50_ms": 2.5652909999999998,
+      "p95_ms": 8.357958,
+      "p99_ms": 17.687708,
+      "cpu_pct_avg": 269.675,
+      "rss_mb_max": 105.765625,
+      "status_codes": {
+        "200": 184065
+      }
+    },
+    {
+      "round": 0,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "baseline",
+      "rps": 48223.44710011796,
+      "success_rate": 1.0,
+      "p50_ms": 1.164208,
+      "p95_ms": 2.680708,
+      "p99_ms": 4.678667,
+      "cpu_pct_avg": 236.47,
+      "rss_mb_max": 28.96875,
+      "status_codes": {
+        "403": 482296
+      }
+    },
+    {
+      "round": 0,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "current",
+      "rps": 53427.33261004988,
+      "success_rate": 1.0,
+      "p50_ms": 1.0572920000000001,
+      "p95_ms": 2.3562079999999996,
+      "p99_ms": 4.200125,
+      "cpu_pct_avg": 254.465,
+      "rss_mb_max": 31.0,
+      "status_codes": {
+        "403": 534437
+      }
+    },
+    {
+      "round": 0,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "current_intel",
+      "rps": 31054.14814549855,
+      "success_rate": 1.0,
+      "p50_ms": 1.616625,
+      "p95_ms": 4.813916,
+      "p99_ms": 9.661542,
+      "cpu_pct_avg": 299.05,
+      "rss_mb_max": 300.765625,
+      "status_codes": {
+        "403": 310566
+      }
+    },
+    {
+      "round": 0,
+      "scenario": "proxy_rules_form_post",
+      "variant": "baseline",
+      "rps": 22888.745030250368,
+      "success_rate": 1.0,
+      "p50_ms": 2.4758340000000003,
+      "p95_ms": 5.383708,
+      "p99_ms": 8.459416000000001,
+      "cpu_pct_avg": 304.075,
+      "rss_mb_max": 39.890625,
+      "status_codes": {
+        "200": 228876
+      }
+    },
+    {
+      "round": 0,
+      "scenario": "proxy_rules_form_post",
+      "variant": "current",
+      "rps": 21530.982431417768,
+      "success_rate": 1.0,
+      "p50_ms": 2.539333,
+      "p95_ms": 6.054917,
+      "p99_ms": 9.703125,
+      "cpu_pct_avg": 281.98,
+      "rss_mb_max": 35.015625,
+      "status_codes": {
+        "200": 215328
+      }
+    },
+    {
+      "round": 0,
+      "scenario": "proxy_rules_form_post",
+      "variant": "current_intel",
+      "rps": 16216.708531526512,
+      "success_rate": 1.0,
+      "p50_ms": 3.2775,
+      "p95_ms": 8.320917000000001,
+      "p99_ms": 14.024750000000001,
+      "cpu_pct_avg": 316.29,
+      "rss_mb_max": 90.0625,
+      "status_codes": {
+        "200": 162186
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "direct_upstream_get",
+      "variant": "upstream_direct",
+      "rps": 142826.10212715762,
+      "success_rate": 1.0,
+      "p50_ms": 0.300625,
+      "p95_ms": 1.098583,
+      "p99_ms": 2.902375,
+      "cpu_pct_avg": null,
+      "rss_mb_max": null,
+      "status_codes": {
+        "200": 1428573
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "proxy_norules_get",
+      "variant": "current",
+      "rps": 38485.425201869366,
+      "success_rate": 1.0,
+      "p50_ms": 1.429125,
+      "p95_ms": 3.32,
+      "p99_ms": 5.637874999999999,
+      "cpu_pct_avg": 258.005,
+      "rss_mb_max": 37.078125,
+      "status_codes": {
+        "200": 384870
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "proxy_norules_get",
+      "variant": "current_intel",
+      "rps": 28980.997828159572,
+      "success_rate": 1.0,
+      "p50_ms": 1.861833,
+      "p95_ms": 4.55225,
+      "p99_ms": 7.679583,
+      "cpu_pct_avg": 327.555,
+      "rss_mb_max": 211.578125,
+      "status_codes": {
+        "200": 289878
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "proxy_norules_get",
+      "variant": "baseline",
+      "rps": 38810.003558580465,
+      "success_rate": 1.0,
+      "p50_ms": 1.3970420000000001,
+      "p95_ms": 3.311625,
+      "p99_ms": 5.587792,
+      "cpu_pct_avg": 255.59,
+      "rss_mb_max": 37.875,
+      "status_codes": {
+        "200": 388177
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "current",
+      "rps": 32280.289360728573,
+      "success_rate": 1.0,
+      "p50_ms": 1.7080000000000002,
+      "p95_ms": 3.958708,
+      "p99_ms": 6.605208,
+      "cpu_pct_avg": 266.205,
+      "rss_mb_max": 30.4375,
+      "status_codes": {
+        "200": 322833
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "current_intel",
+      "rps": 21528.28255982588,
+      "success_rate": 1.0,
+      "p50_ms": 2.4589999999999996,
+      "p95_ms": 6.416125,
+      "p99_ms": 11.278792,
+      "cpu_pct_avg": 314.82,
+      "rss_mb_max": 140.859375,
+      "status_codes": {
+        "200": 215280
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "baseline",
+      "rps": 32724.10074907694,
+      "success_rate": 1.0,
+      "p50_ms": 1.7092500000000002,
+      "p95_ms": 3.712792,
+      "p99_ms": 6.136417,
+      "cpu_pct_avg": 263.5,
+      "rss_mb_max": 38.859375,
+      "status_codes": {
+        "200": 327291
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "current",
+      "rps": 54510.94354398422,
+      "success_rate": 1.0,
+      "p50_ms": 1.0206250000000001,
+      "p95_ms": 2.333833,
+      "p99_ms": 3.9126250000000002,
+      "cpu_pct_avg": 249.685,
+      "rss_mb_max": 29.515625,
+      "status_codes": {
+        "403": 545227
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "current_intel",
+      "rps": 37963.095569136916,
+      "success_rate": 1.0,
+      "p50_ms": 1.42375,
+      "p95_ms": 3.63075,
+      "p99_ms": 6.327041,
+      "cpu_pct_avg": 339.025,
+      "rss_mb_max": 419.1875,
+      "status_codes": {
+        "403": 379854
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "baseline",
+      "rps": 52487.12091711638,
+      "success_rate": 1.0,
+      "p50_ms": 1.053625,
+      "p95_ms": 2.384,
+      "p99_ms": 4.503667,
+      "cpu_pct_avg": 250.84,
+      "rss_mb_max": 35.171875,
+      "status_codes": {
+        "403": 525036
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "proxy_rules_form_post",
+      "variant": "current",
+      "rps": 23523.942305913828,
+      "success_rate": 1.0,
+      "p50_ms": 2.3788329999999998,
+      "p95_ms": 5.2617080000000005,
+      "p99_ms": 8.516417,
+      "cpu_pct_avg": 297.84499999999997,
+      "rss_mb_max": 39.59375,
+      "status_codes": {
+        "200": 235224
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "proxy_rules_form_post",
+      "variant": "current_intel",
+      "rps": 17395.385750359656,
+      "success_rate": 1.0,
+      "p50_ms": 3.1967499999999998,
+      "p95_ms": 7.385041999999999,
+      "p99_ms": 12.173125,
+      "cpu_pct_avg": 341.84499999999997,
+      "rss_mb_max": 102.515625,
+      "status_codes": {
+        "200": 173936
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "proxy_rules_form_post",
+      "variant": "baseline",
+      "rps": 23098.779913418184,
+      "success_rate": 1.0,
+      "p50_ms": 2.434917,
+      "p95_ms": 5.3861669999999995,
+      "p99_ms": 8.493374999999999,
+      "cpu_pct_avg": 301.275,
+      "rss_mb_max": 42.375,
+      "status_codes": {
+        "200": 231006
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "direct_upstream_get",
+      "variant": "upstream_direct",
+      "rps": 118490.73055323595,
+      "success_rate": 1.0,
+      "p50_ms": 0.35975,
+      "p95_ms": 1.328292,
+      "p99_ms": 3.429709,
+      "cpu_pct_avg": null,
+      "rss_mb_max": null,
+      "status_codes": {
+        "200": 1185253
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "proxy_norules_get",
+      "variant": "current_intel",
+      "rps": 21532.149220590454,
+      "success_rate": 1.0,
+      "p50_ms": 2.385042,
+      "p95_ms": 6.838875000000001,
+      "p99_ms": 11.768834,
+      "cpu_pct_avg": 272.925,
+      "rss_mb_max": 131.765625,
+      "status_codes": {
+        "200": 215307
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "proxy_norules_get",
+      "variant": "baseline",
+      "rps": 31444.830071180553,
+      "success_rate": 1.0,
+      "p50_ms": 1.746334,
+      "p95_ms": 4.128083,
+      "p99_ms": 6.777334000000001,
+      "cpu_pct_avg": 241.45,
+      "rss_mb_max": 39.78125,
+      "status_codes": {
+        "200": 314503
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "proxy_norules_get",
+      "variant": "current",
+      "rps": 39929.726232956375,
+      "success_rate": 1.0,
+      "p50_ms": 1.372792,
+      "p95_ms": 3.161958,
+      "p99_ms": 5.506958,
+      "cpu_pct_avg": 256.28,
+      "rss_mb_max": 31.390625,
+      "status_codes": {
+        "200": 399370
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "current_intel",
+      "rps": 23353.46099306173,
+      "success_rate": 1.0,
+      "p50_ms": 2.327625,
+      "p95_ms": 5.563791999999999,
+      "p99_ms": 9.680334,
+      "cpu_pct_avg": 335.675,
+      "rss_mb_max": 162.78125,
+      "status_codes": {
+        "200": 233648
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "baseline",
+      "rps": 32905.23939549764,
+      "success_rate": 1.0,
+      "p50_ms": 1.652333,
+      "p95_ms": 3.901375,
+      "p99_ms": 6.690665999999999,
+      "cpu_pct_avg": 268.12,
+      "rss_mb_max": 38.828125,
+      "status_codes": {
+        "200": 329090
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "current",
+      "rps": 33809.39604904894,
+      "success_rate": 1.0,
+      "p50_ms": 1.648042,
+      "p95_ms": 3.681708,
+      "p99_ms": 6.0897499999999996,
+      "cpu_pct_avg": 269.655,
+      "rss_mb_max": 37.671875,
+      "status_codes": {
+        "200": 338083
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "current_intel",
+      "rps": 34352.84001434063,
+      "success_rate": 1.0,
+      "p50_ms": 1.466042,
+      "p95_ms": 4.299459000000001,
+      "p99_ms": 8.195875000000001,
+      "cpu_pct_avg": 319.09499999999997,
+      "rss_mb_max": 345.0,
+      "status_codes": {
+        "403": 343598
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "baseline",
+      "rps": 54503.66275011153,
+      "success_rate": 1.0,
+      "p50_ms": 1.0567499999999999,
+      "p95_ms": 2.269333,
+      "p99_ms": 3.6536250000000003,
+      "cpu_pct_avg": 258.98,
+      "rss_mb_max": 35.25,
+      "status_codes": {
+        "403": 545211
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "current",
+      "rps": 54319.83210006491,
+      "success_rate": 1.0,
+      "p50_ms": 1.010917,
+      "p95_ms": 2.375125,
+      "p99_ms": 4.530917,
+      "cpu_pct_avg": 247.325,
+      "rss_mb_max": 37.234375,
+      "status_codes": {
+        "403": 543252
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "proxy_rules_form_post",
+      "variant": "current_intel",
+      "rps": 18110.287848174452,
+      "success_rate": 1.0,
+      "p50_ms": 3.0492079999999997,
+      "p95_ms": 6.984959,
+      "p99_ms": 11.632667,
+      "cpu_pct_avg": 347.925,
+      "rss_mb_max": 94.40625,
+      "status_codes": {
+        "200": 181095
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "proxy_rules_form_post",
+      "variant": "baseline",
+      "rps": 22030.516399365075,
+      "success_rate": 1.0,
+      "p50_ms": 2.488959,
+      "p95_ms": 5.829833000000001,
+      "p99_ms": 9.861958000000001,
+      "cpu_pct_avg": 287.8,
+      "rss_mb_max": 40.765625,
+      "status_codes": {
+        "200": 220317
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "proxy_rules_form_post",
+      "variant": "current",
+      "rps": 24649.991294412786,
+      "success_rate": 1.0,
+      "p50_ms": 2.251166,
+      "p95_ms": 5.081125,
+      "p99_ms": 8.715458,
+      "cpu_pct_avg": 306.325,
+      "rss_mb_max": 34.765625,
+      "status_codes": {
+        "200": 246514
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "direct_upstream_get",
+      "variant": "upstream_direct",
+      "rps": 149089.65597868676,
+      "success_rate": 1.0,
+      "p50_ms": 0.300208,
+      "p95_ms": 1.0204170000000001,
+      "p99_ms": 2.5776250000000003,
+      "cpu_pct_avg": null,
+      "rss_mb_max": null,
+      "status_codes": {
+        "200": 1491350
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "proxy_norules_get",
+      "variant": "baseline",
+      "rps": 39280.98371569855,
+      "success_rate": 1.0,
+      "p50_ms": 1.336166,
+      "p95_ms": 3.456791,
+      "p99_ms": 6.412167,
+      "cpu_pct_avg": 247.915,
+      "rss_mb_max": 37.515625,
+      "status_codes": {
+        "200": 392950
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "proxy_norules_get",
+      "variant": "current",
+      "rps": 39645.515116942086,
+      "success_rate": 1.0,
+      "p50_ms": 1.348291,
+      "p95_ms": 3.318542,
+      "p99_ms": 5.833042,
+      "cpu_pct_avg": 248.765,
+      "rss_mb_max": 32.328125,
+      "status_codes": {
+        "200": 396526
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "proxy_norules_get",
+      "variant": "current_intel",
+      "rps": 27458.983038645223,
+      "success_rate": 1.0,
+      "p50_ms": 1.8984169999999998,
+      "p95_ms": 5.083375,
+      "p99_ms": 9.119499999999999,
+      "cpu_pct_avg": 313.215,
+      "rss_mb_max": 213.6875,
+      "status_codes": {
+        "200": 274689
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "baseline",
+      "rps": 31879.715739351275,
+      "success_rate": 1.0,
+      "p50_ms": 1.648042,
+      "p95_ms": 4.258583,
+      "p99_ms": 7.960458,
+      "cpu_pct_avg": 251.26,
+      "rss_mb_max": 39.546875,
+      "status_codes": {
+        "200": 318831
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "current",
+      "rps": 32274.722914850598,
+      "success_rate": 1.0,
+      "p50_ms": 1.707959,
+      "p95_ms": 3.9497079999999998,
+      "p99_ms": 6.914291,
+      "cpu_pct_avg": 260.88,
+      "rss_mb_max": 31.0625,
+      "status_codes": {
+        "200": 322822
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "current_intel",
+      "rps": 24624.65891466147,
+      "success_rate": 1.0,
+      "p50_ms": 2.2135420000000003,
+      "p95_ms": 5.279917,
+      "p99_ms": 8.775625,
+      "cpu_pct_avg": 338.115,
+      "rss_mb_max": 169.6875,
+      "status_codes": {
+        "200": 246256
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "baseline",
+      "rps": 52356.075457805375,
+      "success_rate": 1.0,
+      "p50_ms": 1.064041,
+      "p95_ms": 2.348958,
+      "p99_ms": 4.259667,
+      "cpu_pct_avg": 252.25,
+      "rss_mb_max": 35.0,
+      "status_codes": {
+        "403": 523728
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "current",
+      "rps": 57637.21007763344,
+      "success_rate": 1.0,
+      "p50_ms": 0.963916,
+      "p95_ms": 2.238875,
+      "p99_ms": 4.195125,
+      "cpu_pct_avg": 254.76500000000001,
+      "rss_mb_max": 29.015625,
+      "status_codes": {
+        "403": 576502
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "current_intel",
+      "rps": 32473.23813471095,
+      "success_rate": 1.0,
+      "p50_ms": 1.5148329999999999,
+      "p95_ms": 4.833958999999999,
+      "p99_ms": 8.980375,
+      "cpu_pct_avg": 299.25,
+      "rss_mb_max": 361.421875,
+      "status_codes": {
+        "403": 324837
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "proxy_rules_form_post",
+      "variant": "baseline",
+      "rps": 23196.293013801478,
+      "success_rate": 1.0,
+      "p50_ms": 2.469125,
+      "p95_ms": 5.178083,
+      "p99_ms": 7.6744580000000004,
+      "cpu_pct_avg": 298.40999999999997,
+      "rss_mb_max": 41.265625,
+      "status_codes": {
+        "200": 231968
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "proxy_rules_form_post",
+      "variant": "current",
+      "rps": 25327.40149084282,
+      "success_rate": 1.0,
+      "p50_ms": 2.212209,
+      "p95_ms": 4.846083,
+      "p99_ms": 7.6855839999999995,
+      "cpu_pct_avg": 305.45,
+      "rss_mb_max": 38.65625,
+      "status_codes": {
+        "200": 253300
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "proxy_rules_form_post",
+      "variant": "current_intel",
+      "rps": 17981.770673902916,
+      "success_rate": 1.0,
+      "p50_ms": 3.0669999999999997,
+      "p95_ms": 7.2289579999999996,
+      "p99_ms": 11.646791,
+      "cpu_pct_avg": 338.615,
+      "rss_mb_max": 96.140625,
+      "status_codes": {
+        "200": 179845
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "direct_upstream_get",
+      "variant": "upstream_direct",
+      "rps": 145333.63785630427,
+      "success_rate": 1.0,
+      "p50_ms": 0.297458,
+      "p95_ms": 1.073167,
+      "p99_ms": 2.795291,
+      "cpu_pct_avg": null,
+      "rss_mb_max": null,
+      "status_codes": {
+        "200": 1453643
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "proxy_norules_get",
+      "variant": "current",
+      "rps": 39373.72413518595,
+      "success_rate": 1.0,
+      "p50_ms": 1.3804589999999999,
+      "p95_ms": 3.283,
+      "p99_ms": 5.927167,
+      "cpu_pct_avg": 258.055,
+      "rss_mb_max": 37.359375,
+      "status_codes": {
+        "200": 393814
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "proxy_norules_get",
+      "variant": "current_intel",
+      "rps": 27093.986294571256,
+      "success_rate": 1.0,
+      "p50_ms": 1.933459,
+      "p95_ms": 5.091875,
+      "p99_ms": 9.28275,
+      "cpu_pct_avg": 310.44,
+      "rss_mb_max": 193.96875,
+      "status_codes": {
+        "200": 270987
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "proxy_norules_get",
+      "variant": "baseline",
+      "rps": 39175.05040273926,
+      "success_rate": 1.0,
+      "p50_ms": 1.4068749999999999,
+      "p95_ms": 3.214458,
+      "p99_ms": 5.379791,
+      "cpu_pct_avg": 256.95,
+      "rss_mb_max": 39.296875,
+      "status_codes": {
+        "200": 391778
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "current",
+      "rps": 33328.28601271328,
+      "success_rate": 1.0,
+      "p50_ms": 1.666416,
+      "p95_ms": 3.721791,
+      "p99_ms": 6.397125,
+      "cpu_pct_avg": 270.66,
+      "rss_mb_max": 33.796875,
+      "status_codes": {
+        "200": 333304
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "current_intel",
+      "rps": 23541.76586810568,
+      "success_rate": 1.0,
+      "p50_ms": 2.295458,
+      "p95_ms": 5.649084,
+      "p99_ms": 9.948125000000001,
+      "cpu_pct_avg": 333.46,
+      "rss_mb_max": 162.859375,
+      "status_codes": {
+        "200": 235438
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "baseline",
+      "rps": 32493.03870253013,
+      "success_rate": 1.0,
+      "p50_ms": 1.683166,
+      "p95_ms": 3.945166,
+      "p99_ms": 6.760375,
+      "cpu_pct_avg": 259.6,
+      "rss_mb_max": 38.640625,
+      "status_codes": {
+        "200": 324991
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "current",
+      "rps": 52784.08081522311,
+      "success_rate": 1.0,
+      "p50_ms": 1.0147920000000001,
+      "p95_ms": 2.572666,
+      "p99_ms": 5.306666,
+      "cpu_pct_avg": 245.245,
+      "rss_mb_max": 34.4375,
+      "status_codes": {
+        "403": 527952
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "current_intel",
+      "rps": 36431.229561994274,
+      "success_rate": 1.0,
+      "p50_ms": 1.4035829999999998,
+      "p95_ms": 3.9089579999999997,
+      "p99_ms": 7.782875,
+      "cpu_pct_avg": 310.9952380952381,
+      "rss_mb_max": 418.859375,
+      "status_codes": {
+        "403": 364406
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "baseline",
+      "rps": 53093.59993251181,
+      "success_rate": 1.0,
+      "p50_ms": 1.066917,
+      "p95_ms": 2.3405829999999996,
+      "p99_ms": 4.028709,
+      "cpu_pct_avg": 254.085,
+      "rss_mb_max": 33.03125,
+      "status_codes": {
+        "403": 531022
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "proxy_rules_form_post",
+      "variant": "current",
+      "rps": 24029.912644448512,
+      "success_rate": 1.0,
+      "p50_ms": 2.355542,
+      "p95_ms": 5.025583,
+      "p99_ms": 8.048958,
+      "cpu_pct_avg": 304.295,
+      "rss_mb_max": 38.296875,
+      "status_codes": {
+        "200": 240341
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "proxy_rules_form_post",
+      "variant": "current_intel",
+      "rps": 18098.49104568985,
+      "success_rate": 1.0,
+      "p50_ms": 2.984833,
+      "p95_ms": 6.993917,
+      "p99_ms": 12.778375,
+      "cpu_pct_avg": 336.25,
+      "rss_mb_max": 95.96875,
+      "status_codes": {
+        "200": 180965
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "proxy_rules_form_post",
+      "variant": "baseline",
+      "rps": 23294.23091465369,
+      "success_rate": 1.0,
+      "p50_ms": 2.428167,
+      "p95_ms": 5.1926250000000005,
+      "p99_ms": 8.603542000000001,
+      "cpu_pct_avg": 305.825,
+      "rss_mb_max": 42.03125,
+      "status_codes": {
+        "200": 232932
+      }
+    }
+  ]
+}

@@ -51,11 +51,12 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tag", default="run")
     ap.add_argument("--requests", type=int, default=300000)
+    ap.add_argument("--bin", default=str(BIN / "openshield"), help="openshield binary to test")
     args = ap.parse_args()
     d = Path(tempfile.mkdtemp())
     (d / "c.yaml").write_text(CFG)
     up = subprocess.Popen([str(BIN / "echo-upstream"), "127.0.0.1:13200"], stderr=subprocess.DEVNULL)
-    px = subprocess.Popen([str(BIN / "openshield"), "-c", str(d / "c.yaml")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    px = subprocess.Popen([args.bin, "-c", str(d / "c.yaml")], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     time.sleep(1.0)
     points = []
     try:
@@ -73,7 +74,7 @@ def main():
             points.append({"unique_keys": step * i, "rss_mb": rss_mb(px.pid)})
             print(points[-1], flush=True)
     finally:
-        px.send_signal(signal.SIGTERM)
+        px.kill()
         up.send_signal(signal.SIGTERM)
         px.wait()
         up.wait()
