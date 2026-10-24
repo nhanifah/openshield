@@ -4,7 +4,7 @@ mod sink;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-pub use format::{JsonFormatter, TextFormatter};
+pub use format::{JsonFormatter, TextFormatter, text_safe};
 use serde::{Deserialize, Serialize};
 pub use sink::{WriterSink, open_writer};
 

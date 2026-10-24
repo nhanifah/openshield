@@ -83,6 +83,7 @@ pub fn build(score_names: &[String], token_ids: &[String]) -> Scheme {
     opt!(b, "http.request.uri", Str);
     opt!(b, "http.request.uri.path", Str);
     opt!(b, "http.request.uri.path.extension", Str);
+    opt!(b, "http.request.uri.path.normalized", Str);
     opt!(b, "http.request.uri.query", Str);
     opt!(b, "http.request.timestamp.sec", Int);
     opt!(b, "http.request.timestamp.msec", Int);

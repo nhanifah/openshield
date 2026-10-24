@@ -1,0 +1,72 @@
+# End-to-end configuration with the intelligence layer, admin API and the
+# mock Gemini/Turnstile server. Tokens and the API key come from the
+# environment set by the harness.
+listen: "127.0.0.1:18090"
+upstream: "http://127.0.0.1:13000"
+workers: 2
+pid_file: "/tmp/openshield-e2e-intel.pid"
+upgrade_sock: "/tmp/openshield-e2e-intel-upgrade.sock"
+# The harness connects from 127.0.0.1 and names the client in X-Forwarded-For.
+trusted_proxies: ["127.0.0.1"]
+logging:
+  format: json
+  access_log: "__LOGDIR__/intel-access.log"
+  audit_log: "__LOGDIR__/intel-audit.log"
+metrics:
+  listen: "127.0.0.1:19092"
+max_request_body_buffer: 65536
+log_payloads: true
+challenge:
+  turnstile_site_key: "test-site-key"
+  turnstile_secret_key: "test-secret"
+  cookie_secret: "e2e-cookie-secret-0123456789"
+  turnstile_verify_url: "http://127.0.0.1:13900/turnstile/v0/siteverify"
+  turnstile_timeout_ms: 2000
+rulesets:
+  - name: main
+    kind: root
+    rules:
+      - id: block-admin
+        action: block
+        expression: 'http.request.uri.path.normalized == "/admin"'
+      - id: block-sqli-args
+        action: block
+        expression: "any(detect_sqli(url_decode_uni(http.request.uri.args.values[*])))"
+      - id: challenge-protected
+        action: challenge
+        expression: 'starts_with(http.request.uri.path, "/protected")'
+      - id: log-search
+        action: log
+        expression: 'http.request.uri.path == "/search"'
+intel:
+  enabled: true
+  store:
+    path: "__LOGDIR__/intel.db"
+  anomaly:
+    window_s: 10
+    rate_threshold: 30
+    scan_404_threshold: 10
+    block_burst_threshold: 5
+  ai:
+    enabled: true
+    model: "mock-model"
+    base_url: "http://127.0.0.1:13900"
+    api_key_env: "OS_E2E_GEMINI_KEY"
+    timeout_ms: 1500
+    max_batch: 4
+    requests_per_minute: 600
+    max_calls_per_day: 100000
+    breaker_failures: 3
+    breaker_cooldown_s: 4
+    triggers: [block, challenge, rule_match, anomaly]
+    cache_ttl_s: 0
+    price_per_mtok_in: 1.0
+    price_per_mtok_out: 2.0
+admin:
+  enabled: true
+  listen: "127.0.0.1:19190"
+  users:
+    - {name: alice, role: admin, token_env: OS_E2E_ADMIN}
+    - {name: bob, role: admin, token_env: OS_E2E_ADMIN2}
+    - {name: ana, role: analyst, token_env: OS_E2E_ANALYST}
+    - {name: val, role: viewer, token_env: OS_E2E_VIEWER}

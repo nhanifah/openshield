@@ -179,10 +179,53 @@ impl Transaction {
         &self.waf
     }
 
+    /// The firewall this transaction runs on (it keeps it alive even if a
+    /// new policy is swapped in mid-request).
+    pub fn waf_arc(&self) -> Arc<Waf> {
+        Arc::clone(&self.waf)
+    }
+
     /// The terminal action taken so far: `pass`, `allow`, `block` or
     /// `challenge`.
     pub fn action(&self) -> &str {
         &self.action
+    }
+
+    /// The request as recorded by [`request_headers`] or [`set_request`].
+    ///
+    /// [`request_headers`]: Transaction::request_headers
+    /// [`set_request`]: Transaction::set_request
+    pub fn request(&self) -> Option<&RequestData> {
+        self.request.as_ref()
+    }
+
+    /// The buffered (possibly truncated) request body.
+    pub fn request_body(&self) -> &[u8] {
+        &self.req.buffer.buf
+    }
+
+    /// Scores accumulated so far.
+    pub fn scores(&self) -> &HashMap<String, i64> {
+        &self.scores
+    }
+
+    /// Rules recorded so far as `(rule_id, action)`.
+    pub fn matched_rules(&self) -> &[(String, String)] {
+        &self.matched_rules
+    }
+
+    /// Time since the transaction started.
+    pub fn elapsed(&self) -> std::time::Duration {
+        self.start.elapsed()
+    }
+
+    /// Record a terminal decision made by the host outside the rule engine
+    /// (for example a dynamic IP block), so it shows in the action and in
+    /// the audit log like a rule match. Ignores `detection_only`: the host
+    /// decides whether to enforce.
+    pub fn record_external(&mut self, rule_id: &str, action: &str) {
+        self.matched_rules.push((rule_id.to_string(), action.to_string()));
+        self.action = action.to_string();
     }
 
     /// Record the request without evaluating any rules, so that [`finish`]
@@ -269,7 +312,10 @@ impl Transaction {
         self.req.buffer.feed(data);
         self.req.pending.extend_from_slice(data);
 
-        if !end_of_stream && self.req.buffer.truncated {
+        // Checked before end-of-stream handling: the bytes that cross the
+        // limit may arrive in the final chunk, and those must not be
+        // forwarded uninspected when the limit action is `reject`.
+        if self.req.buffer.truncated {
             match waf.settings.request_body_limit_action {
                 BodyLimitAction::Reject => {
                     self.action = "block".into();
@@ -350,7 +396,7 @@ impl Transaction {
         self.res.buffer.feed(data);
         self.res.pending.extend_from_slice(data);
 
-        if !end_of_stream && self.res.buffer.truncated {
+        if self.res.buffer.truncated {
             match settings.response_body_limit_action {
                 BodyLimitAction::Reject => {
                     return self.suppress_response(Intervention {
@@ -421,7 +467,7 @@ impl Transaction {
             protocol: protocol.clone(),
             host: host.clone(),
             path: path.clone(),
-            query: query.clone(),
+            query: waf_redactor_query(&self.waf, &query),
             status: outcome.status,
             duration_ms: elapsed.as_secs_f64() * 1000.0,
             bytes_received: self.req.buffer.total_size,
@@ -436,18 +482,27 @@ impl Transaction {
             };
         }
 
-        let headers: HashMap<String, String> = self
+        let redactor = self.waf.redactor();
+        let headers = self
             .request
             .as_ref()
-            .map(|r| r.headers.iter().cloned().collect())
+            .map(|r| audit_headers(redactor, &r.headers))
             .unwrap_or_default();
-        let body = lossy_body(&self.req.buffer.buf);
+        let req_ct = self
+            .request
+            .as_ref()
+            .and_then(|r| populate::get_header(&r.headers, "content-type"));
+        let body = lossy_body(&self.req.buffer.buf).map(|b| redactor.body(req_ct, &b).into_owned());
 
-        let response = outcome.headers.map(|headers| AuditResponse {
-            status: outcome.status,
-            headers: headers.iter().cloned().collect(),
-            body: lossy_body(&self.res.buffer.buf),
-            body_size: self.res.buffer.total_size,
+        let response = outcome.headers.map(|headers| {
+            let res_ct = populate::get_header(headers, "content-type");
+            AuditResponse {
+                status: outcome.status,
+                headers: audit_headers(redactor, headers),
+                body: lossy_body(&self.res.buffer.buf)
+                    .map(|b| redactor.body(res_ct, &b).into_owned()),
+                body_size: self.res.buffer.total_size,
+            }
         });
 
         let audit = AuditLogEntry {
@@ -466,7 +521,7 @@ impl Transaction {
                 protocol,
                 host,
                 path,
-                query,
+                query: redactor.query(&query).into_owned(),
                 headers,
                 body,
                 body_size: self.req.buffer.total_size,
@@ -579,6 +634,29 @@ impl Transaction {
             body.truncated,
         );
     }
+}
+
+fn waf_redactor_query(waf: &Waf, query: &str) -> String {
+    waf.redactor().query(query).into_owned()
+}
+
+/// Headers for the audit log: values redacted, repeated headers joined with
+/// `, ` so none are lost.
+fn audit_headers(
+    redactor: &crate::redact::Redactor,
+    headers: &[(String, String)],
+) -> HashMap<String, String> {
+    let mut out: HashMap<String, String> = HashMap::with_capacity(headers.len());
+    for (k, v) in headers {
+        let v = redactor.header(k, v);
+        out.entry(k.to_ascii_lowercase())
+            .and_modify(|e| {
+                e.push_str(", ");
+                e.push_str(&v);
+            })
+            .or_insert_with(|| v.into_owned());
+    }
+    out
 }
 
 fn lossy_body(buf: &[u8]) -> Option<String> {
@@ -826,6 +904,59 @@ challenge:
     }
 
     #[test]
+    fn request_body_over_limit_in_final_chunk_is_rejected() {
+        // Regression: the limit used to be checked only on non-final chunks.
+        let settings = "max_request_body_buffer: 4\nrequest_body_limit_action: reject";
+        let mut tx = waf(settings, BLOCK_EVIL_BODY).transaction();
+        tx.request_headers(request("/", &[]));
+        assert_eq!(tx.request_body_chunk(b"abc", false), BodyVerdict::Hold);
+        assert_eq!(
+            tx.request_body_chunk(b"defevil", true),
+            BodyVerdict::Block(block(413, Some("request body too large")))
+        );
+    }
+
+    #[test]
+    fn request_body_over_limit_in_single_final_chunk_is_rejected() {
+        let settings = "max_request_body_buffer: 4\nrequest_body_limit_action: reject";
+        let mut tx = waf(settings, BLOCK_EVIL_BODY).transaction();
+        tx.request_headers(request("/", &[]));
+        assert_eq!(
+            tx.request_body_chunk(b"abcdefgh", true),
+            BodyVerdict::Block(block(413, Some("request body too large")))
+        );
+    }
+
+    #[test]
+    fn request_body_over_limit_in_final_chunk_process_partial_inspects_prefix() {
+        let settings = "max_request_body_buffer: 4\nrequest_body_limit_action: process_partial";
+        let mut tx = waf(settings, BLOCK_EVIL_BODY).transaction();
+        tx.request_headers(request("/", &[]));
+        assert_eq!(
+            tx.request_body_chunk(b"evilxx", true),
+            BodyVerdict::Block(block(403, None))
+        );
+        let mut tx = waf(settings, BLOCK_EVIL_BODY).transaction();
+        tx.request_headers(request("/", &[]));
+        assert_eq!(
+            tx.request_body_chunk(b"abcdef", true),
+            BodyVerdict::Forward(b"abcdef".to_vec())
+        );
+    }
+
+    #[test]
+    fn response_body_over_limit_in_final_chunk_is_suppressed_on_reject() {
+        let settings = "inspect_response_body: true\nmax_response_body_buffer: 4\n\
+                        response_body_limit_action: reject";
+        let mut tx = waf(settings, BLOCK_SECRET_RESPONSE).transaction();
+        tx.request_headers(request("/", &[]));
+        assert_eq!(
+            tx.response_body_chunk(b"abcdef", true),
+            BodyVerdict::Block(block(0, Some("response blocked")))
+        );
+    }
+
+    #[test]
     fn request_body_over_limit_process_partial_releases_then_streams() {
         let settings = "max_request_body_buffer: 4\nrequest_body_limit_action: process_partial";
         let mut tx = waf(settings, BLOCK_EVIL_BODY).transaction();
@@ -961,6 +1092,51 @@ challenge:
     }
 
     #[test]
+    fn audit_entry_redacts_secrets_and_keeps_repeated_headers() {
+        let mut tx = waf("", BLOCK_ADMIN).transaction();
+        let mut req = request(
+            "/admin",
+            &[
+                ("authorization", "Bearer s3cr3t-value"),
+                ("cookie", "session=abc"),
+                ("x-tag", "one"),
+                ("x-tag", "two"),
+                ("content-type", "application/x-www-form-urlencoded"),
+            ],
+        );
+        req.query = "q=1&access_token=zzz".into();
+        tx.request_headers(req);
+        tx.request_body_chunk(b"user=bob&password=hunter2", true);
+        let record = tx.finish(ResponseOutcome {
+            status: 403,
+            headers: Some(&[("set-cookie".into(), "sid=1".into())]),
+            error: None,
+        });
+        assert_eq!(record.access.query, "q=1&access_token=%5BREDACTED%5D");
+        let audit = record.audit.unwrap();
+        let text = serde_json::to_string(&audit).unwrap();
+        for secret in ["s3cr3t-value", "session=abc", "hunter2", "zzz", "sid=1"] {
+            assert!(!text.contains(secret), "{secret} leaked: {text}");
+        }
+        assert_eq!(audit.request.headers["x-tag"], "one, two");
+    }
+
+    #[test]
+    fn redaction_can_be_disabled() {
+        let mut tx = waf("redaction: {enabled: false}", BLOCK_ADMIN).transaction();
+        tx.request_headers(request("/admin", &[("authorization", "Bearer s3cr3t")]));
+        let audit = tx
+            .finish(ResponseOutcome {
+                status: 403,
+                headers: None,
+                error: None,
+            })
+            .audit
+            .unwrap();
+        assert_eq!(audit.request.headers["authorization"], "Bearer s3cr3t");
+    }
+
+    #[test]
     fn finish_runs_logging_phase_rules() {
         let rules = r#"
 - id: tail
@@ -993,6 +1169,24 @@ challenge:
         assert_eq!(record.access.host, "-");
         assert_eq!(record.access.client_ip, "-");
         assert_eq!(record.access.error.as_deref(), Some("boom"));
+    }
+
+    #[test]
+    fn external_decision_is_recorded_and_audited() {
+        let mut tx = waf("", BLOCK_ADMIN).transaction();
+        tx.set_request(request("/", &[]));
+        tx.record_external("dynamic:ip_block", "block");
+        assert_eq!(tx.action(), "block");
+        assert_eq!(tx.matched_rules()[0].0, "dynamic:ip_block");
+        let audit = tx
+            .finish(ResponseOutcome {
+                status: 403,
+                headers: None,
+                error: None,
+            })
+            .audit
+            .expect("external decision should produce an audit entry");
+        assert_eq!(audit.waf_matched_rules[0].id, "dynamic:ip_block");
     }
 
     #[test]

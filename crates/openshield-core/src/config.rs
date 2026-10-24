@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// WAF configuration: everything the core needs, and nothing about the
 /// server hosting it. Hosts embed this in their own config (for example with
@@ -28,6 +28,10 @@ pub struct WafConfig {
     /// Log the payload values that triggered each matched rule (audit log).
     #[serde(default)]
     pub log_payloads: bool,
+
+    /// What to mask in audit logs and security events.
+    #[serde(default)]
+    pub redaction: crate::redact::RedactionConfig,
 
     #[serde(default)]
     pub geoip: Option<GeoIpConfig>,
@@ -168,7 +172,7 @@ impl Default for RuleLoggingConfig {
     }
 }
 
-#[derive(Debug, Clone, Deserialize, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum Phase {
     RequestHeaders,
@@ -178,7 +182,7 @@ pub enum Phase {
     Logging,
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
     Block,
@@ -312,6 +316,12 @@ pub struct ChallengeConfig {
     /// actual site key.
     #[serde(default)]
     pub custom_page: Option<PathBuf>,
+    /// Turnstile verification endpoint. Change only to point at a test double.
+    #[serde(default = "default_turnstile_verify_url")]
+    pub turnstile_verify_url: String,
+    /// Timeout for the verification call, in milliseconds.
+    #[serde(default = "default_turnstile_timeout_ms")]
+    pub turnstile_timeout_ms: u64,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -341,6 +351,12 @@ fn default_challenge_cookie_ttl() -> u64 {
 }
 fn default_challenge_cookie_name() -> String {
     "oss_challenge".into()
+}
+fn default_turnstile_verify_url() -> String {
+    "https://challenges.cloudflare.com/turnstile/v0/siteverify".into()
+}
+fn default_turnstile_timeout_ms() -> u64 {
+    5000
 }
 fn default_challenge_path() -> String {
     "/__openshield/challenge".into()

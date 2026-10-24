@@ -35,6 +35,26 @@ pub struct ServerConfig {
     #[serde(default)]
     pub metrics: Option<MetricsConfig>,
 
+    /// Requests with a larger header block get 431.
+    #[serde(default = "default_max_request_header_bytes")]
+    pub max_request_header_bytes: usize,
+
+    /// Peers (addresses or CIDRs) allowed to name the client in
+    /// `client_ip_header`. Empty: the TCP peer is always the client.
+    #[serde(default)]
+    pub trusted_proxies: Vec<String>,
+
+    #[serde(default = "default_client_ip_header")]
+    pub client_ip_header: String,
+
+    /// Security events, anomaly detection and AI supervision.
+    #[serde(default)]
+    pub intel: openshield_intel::config::IntelConfig,
+
+    /// Dashboard and admin API.
+    #[serde(default)]
+    pub admin: openshield_intel::config::AdminConfig,
+
     #[serde(flatten)]
     pub waf: WafConfig,
 }
@@ -72,10 +92,23 @@ impl ServerConfig {
         if self.upstream.is_empty() {
             return Err("upstream address is required".into());
         }
+        crate::parse_upstream(&self.upstream)?;
+        crate::proxy::TrustedProxies::new(&self.trusted_proxies, &self.client_ip_header)?;
+        if self.max_request_header_bytes < 1024 {
+            return Err("max_request_header_bytes must be at least 1024".into());
+        }
+        self.intel.validate()?;
+        self.admin.validate(&self.intel)?;
         self.waf.validate()
     }
 }
 
+fn default_max_request_header_bytes() -> usize {
+    65536
+}
+fn default_client_ip_header() -> String {
+    "X-Forwarded-For".into()
+}
 fn default_true() -> bool {
     true
 }
@@ -145,8 +178,18 @@ rulesets:
     #[test]
     fn minimal_config_needs_only_listen_and_upstream() {
         let cfg = ServerConfig::from_yaml("listen: a\nupstream: b\n").unwrap();
+        assert_eq!(cfg.max_request_header_bytes, 65536);
+        assert!(cfg.trusted_proxies.is_empty());
         assert!(cfg.waf.rulesets.is_empty());
         assert!(!cfg.waf.log_payloads);
+    }
+
+    #[test]
+    fn invalid_upstream_and_proxies_are_rejected() {
+        assert!(ServerConfig::from_yaml("listen: a\nupstream: 'h:notaport'\n").is_err());
+        assert!(
+            ServerConfig::from_yaml("listen: a\nupstream: b\ntrusted_proxies: [nope]\n").is_err()
+        );
     }
 
     #[test]

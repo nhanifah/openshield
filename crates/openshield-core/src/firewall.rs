@@ -10,6 +10,7 @@ use crate::challenge::ChallengeManager;
 use crate::compiler;
 use crate::config::{BodyLimitAction, WafConfig};
 use crate::geoip::GeoIp;
+use crate::redact::Redactor;
 use crate::transaction::Transaction;
 use crate::waf::engine::{Engine, Phase};
 use crate::waf::jwt::JwtValidator;
@@ -55,6 +56,7 @@ pub struct Waf {
     pub(crate) bytes_lists: BytesListMatcher,
     pub(crate) geoip: Option<GeoIp>,
     pub(crate) challenge: Option<ChallengeManager>,
+    pub(crate) redactor: Redactor,
     pub(crate) settings: Settings,
     pub(crate) has_request_body_rules: bool,
     pub(crate) has_response_body_rules: bool,
@@ -121,6 +123,7 @@ impl Waf {
             bytes_lists,
             geoip,
             challenge,
+            redactor: Redactor::new(&config.redaction),
             settings: Settings::from(config),
             has_request_body_rules,
             has_response_body_rules,
@@ -142,6 +145,11 @@ impl Waf {
 
     pub fn challenge(&self) -> Option<&ChallengeManager> {
         self.challenge.as_ref()
+    }
+
+    /// Masks secrets in anything recorded about a request.
+    pub fn redactor(&self) -> &Redactor {
+        &self.redactor
     }
 
     pub fn rule_count(&self) -> usize {
