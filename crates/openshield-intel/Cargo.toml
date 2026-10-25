@@ -1,0 +1,42 @@
+[package]
+name = "openshield-intel"
+description = "OpenShield security intelligence: event pipeline, anomaly detection, AI supervision, datasets, policy management and the admin API"
+version.workspace = true
+edition.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "openshield-eval"
+path = "src/bin/eval.rs"
+
+[dependencies]
+openshield-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+log.workspace = true
+chrono.workspace = true
+uuid.workspace = true
+hex.workspace = true
+hmac.workspace = true
+http.workspace = true
+bytes.workspace = true
+ip_network.workspace = true
+reqwest.workspace = true
+arc-swap = "1"
+parking_lot = "0.12"
+sha2 = "0.11"
+rusqlite = { version = "0.37", features = ["bundled"] }
+# <1.54: tokio 1.54 panics on BufStream::with_capacity(0, 0), which pingora 0.9 calls
+# for every connection. >=1.53.3 carries the fix for RUSTSEC-2026-0386.
+tokio = { version = ">=1.53.3, <1.54", features = ["rt-multi-thread", "sync", "time", "macros", "net", "fs"] }
+axum = { version = "0.8", default-features = false, features = ["http1", "json", "query", "tokio"] }
+futures-util = { version = "0.3", default-features = false }
+tokio-stream = { version = "0.1", features = ["sync"] }
+prometheus.workspace = true
+lazy_static.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

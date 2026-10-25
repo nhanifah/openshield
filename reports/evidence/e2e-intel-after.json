@@ -1,0 +1,195 @@
+{
+  "tag": "after",
+  "time": "2026-10-24T19:49:45Z",
+  "results": [
+    {
+      "id": "I01",
+      "category": "intel",
+      "title": "Admin API rejects missing and wrong tokens",
+      "severity": "high",
+      "passed": true,
+      "detail": "none=401 wrong=401 valid=200",
+      "seconds": 0.01
+    },
+    {
+      "id": "I02",
+      "category": "intel",
+      "title": "Roles gate writes: a viewer cannot block, label or apply policy",
+      "severity": "high",
+      "passed": true,
+      "detail": "viewer block=403 viewer apply=403 analyst apply=403 analyst audit=403",
+      "seconds": 0.0
+    },
+    {
+      "id": "I03",
+      "category": "intel",
+      "title": "Requests become events with secrets redacted",
+      "severity": "high",
+      "passed": true,
+      "detail": "action=block rules=['block-admin'] leaked=[]",
+      "seconds": 0.21
+    },
+    {
+      "id": "I04",
+      "category": "intel",
+      "title": "X-Request-ID is sent upstream and to the client and matches the event",
+      "severity": "medium",
+      "passed": true,
+      "detail": "client=6cbba6f9-0c67-4bbc-bfc1-515e548da701 upstream=6cbba6f9-0c67-4bbc-bfc1-515e548da701 event=yes",
+      "seconds": 0.42
+    },
+    {
+      "id": "I05",
+      "category": "intel",
+      "title": "Trusted proxy: the client IP comes from X-Forwarded-For only via the trusted peer",
+      "severity": "medium",
+      "passed": true,
+      "detail": "recorded ip=198.51.100.20",
+      "seconds": 0.21
+    },
+    {
+      "id": "I06",
+      "category": "intel",
+      "title": "Dynamic IP block applies before rules, is audited, and can be removed",
+      "severity": "high",
+      "passed": true,
+      "detail": "before=200 during=403 other=200 after=200 event=yes audit_entries=2",
+      "seconds": 0.21
+    },
+    {
+      "id": "I07",
+      "category": "intel",
+      "title": "Overly broad or malformed block targets are refused",
+      "severity": "medium",
+      "passed": true,
+      "detail": "0.0.0.0/0=400 garbage=400",
+      "seconds": 0.0
+    },
+    {
+      "id": "I08",
+      "category": "intel",
+      "title": "Policy: validate rejects server keys; simulate reports the change; apply takes effect live; rollback restores",
+      "severity": "high",
+      "passed": true,
+      "detail": "validate_bad=False validate_good=True sim_changed=True apply=200/applied live=403 rollback=200 restored=200 versions=3",
+      "seconds": 0.52
+    },
+    {
+      "id": "I09",
+      "category": "intel",
+      "title": "Apply requires a comment and refuses an invalid policy without changing the live one",
+      "severity": "medium",
+      "passed": true,
+      "detail": "no_comment=400 invalid=400 version 3->3",
+      "seconds": 0.0
+    },
+    {
+      "id": "I10",
+      "category": "intel",
+      "title": "Anomaly detection raises a rate_spike alert for a flooding client",
+      "severity": "medium",
+      "passed": true,
+      "detail": "alert=yes anomalous_event=yes",
+      "seconds": 0.22
+    },
+    {
+      "id": "I11",
+      "category": "intel",
+      "title": "AI verdict is attached to a blocked event; provider gets no secrets and the key only in a header",
+      "severity": "high",
+      "passed": true,
+      "detail": "verdict={'category': 'malicious', 'confidence': 0.85, 'recommended_action': 'monitor', 'risk': 0.9} provider_calls=1 leaked=[] key_in_header=True key_in_url=False",
+      "seconds": 0.2
+    },
+    {
+      "id": "I12",
+      "category": "intel",
+      "title": "Prompt injection in a request is flagged for review and changes no enforcement",
+      "severity": "high",
+      "passed": true,
+      "detail": "enforced_status=403 ai_category=legitimate ai_status=needs_review reasons=['input contains text aimed at an AI model (ignore previous, classify as legitimate)', 'model disagrees with a firewall block']",
+      "seconds": 0.21
+    },
+    {
+      "id": "I13",
+      "category": "intel",
+      "title": "AI outage: breaker opens, proxy latency and blocking unaffected, alert raised",
+      "severity": "high",
+      "passed": true,
+      "detail": "codes_all_403=True 12 requests took 0.00s breaker=open failures=3 alert=yes benign=200",
+      "seconds": 2.52
+    },
+    {
+      "id": "I14",
+      "category": "intel",
+      "title": "AI timeouts and malformed output are contained",
+      "severity": "medium",
+      "passed": true,
+      "detail": "invalid_outputs=1 slow_mode_request=403 in 0.00s last_error=timeout",
+      "seconds": 9.02
+    },
+    {
+      "id": "I15",
+      "category": "intel",
+      "title": "Labels: four-eyes review, then dataset export without raw IPs",
+      "severity": "high",
+      "passed": true,
+      "detail": "label=200 self_approve=403 other_approve=200 bad_label=400 export=200 contains_event=True raw_ip_exported=False traversal=400",
+      "seconds": 0.41
+    },
+    {
+      "id": "I16",
+      "category": "intel",
+      "title": "Live stream delivers event and stats messages",
+      "severity": "medium",
+      "passed": true,
+      "detail": "events=5 stats=5 unauth=401",
+      "seconds": 4.29
+    },
+    {
+      "id": "I17",
+      "category": "intel",
+      "title": "Health, readiness and Prometheus metrics",
+      "severity": "low",
+      "passed": true,
+      "detail": "healthz=200 readyz=200 components={'ai': 'ok', 'policy': 'ok', 'store': 'ok'} missing_metrics=[]",
+      "seconds": 0.0
+    },
+    {
+      "id": "I18",
+      "category": "intel",
+      "title": "Dashboard is served with a strict CSP and no caching",
+      "severity": "medium",
+      "passed": true,
+      "detail": "csp_ok=True cache=no-store xfo=DENY",
+      "seconds": 0.0
+    },
+    {
+      "id": "I19",
+      "category": "intel",
+      "title": "Challenge redirect is limited to the same site (no open redirect)",
+      "severity": "medium",
+      "passed": true,
+      "detail": "{'https://evil.test/phish': (302, '/'), '//evil.test/x': (302, '/'), '/account?x=1': (302, '/account?x=1'), 'http://app.test/cart': (302, '/cart')}",
+      "seconds": 0.0
+    },
+    {
+      "id": "I20",
+      "category": "intel",
+      "title": "Challenge flow: page served, failed token re-challenges, passed token sets a cookie that is honoured",
+      "severity": "medium",
+      "passed": true,
+      "detail": "first=403 bad=403 good=302 with_cookie=200 cookie_other_ip=403",
+      "seconds": 0.0
+    },
+    {
+      "id": "I21",
+      "category": "intel",
+      "title": "Failed admin logins are rate limited",
+      "severity": "medium",
+      "passed": true,
+      "detail": "codes=[401, 401, 401, 401, 401, 401, 401, 401, 401, 429, 429, 429]",
+      "seconds": 0.01
+    }
+  ]
+}

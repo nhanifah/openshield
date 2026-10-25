@@ -11,6 +11,8 @@ type HmacSha1 = Hmac<Sha1>;
 pub struct ChallengeManager {
     config: ChallengeConfig,
     challenge_page: String,
+    /// Shared client: connection reuse, and a bounded wait on Cloudflare.
+    client: reqwest::Client,
 }
 
 /// Fields of the form the challenge page posts back.
@@ -47,9 +49,17 @@ impl ChallengeManager {
             default_challenge_page(&config.turnstile_site_key, &config.challenge_path)
         };
 
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_millis(config.turnstile_timeout_ms))
+            .connect_timeout(std::time::Duration::from_millis(
+                config.turnstile_timeout_ms.min(3000),
+            ))
+            .build()
+            .expect("failed to build HTTP client");
         Self {
             config: config.clone(),
             challenge_page,
+            client,
         }
     }
 
@@ -81,9 +91,9 @@ impl ChallengeManager {
 
     /// Verify a Turnstile token with Cloudflare's API.
     pub async fn verify_turnstile(&self, token: &str, client_ip: &str) -> bool {
-        let client = reqwest::Client::new();
-        let resp = client
-            .post("https://challenges.cloudflare.com/turnstile/v0/siteverify")
+        let resp = self
+            .client
+            .post(&self.config.turnstile_verify_url)
             .form(&[
                 ("secret", self.config.turnstile_secret_key.as_str()),
                 ("response", token),
@@ -157,6 +167,49 @@ impl ChallengeManager {
         let payload = format!("{ip}|{ts_str}");
         let expected_sig = hmac_sign(&self.config.cookie_secret, payload.as_bytes());
         constant_time_eq(sig.as_bytes(), expected_sig.as_bytes())
+    }
+}
+
+/// Where to send the client after a passed challenge.
+///
+/// Only same-site targets are allowed: a path (`/a?b`), or an absolute URL
+/// whose host equals the request's `Host`, reduced to its path. Anything
+/// else (other hosts, `//host`, `/\\host`, other schemes, control
+/// characters) becomes `/`, so the challenge cannot be used as an open
+/// redirect.
+pub fn safe_redirect(target: Option<&str>, request_host: &str) -> String {
+    let Some(target) = target else {
+        return "/".into();
+    };
+    if target.is_empty() || target.chars().any(|c| c.is_control() || c == '\\') {
+        return "/".into();
+    }
+    if target.starts_with('/') {
+        if target.starts_with("//") {
+            return "/".into();
+        }
+        return target.to_string();
+    }
+    let rest = target
+        .strip_prefix("https://")
+        .or_else(|| target.strip_prefix("http://"));
+    let Some(rest) = rest else {
+        return "/".into();
+    };
+    let (authority, path) = match rest.find(['/', '?', '#']) {
+        Some(i) => (&rest[..i], &rest[i..]),
+        None => (rest, "/"),
+    };
+    if authority.contains('@') || !authority.eq_ignore_ascii_case(request_host) {
+        return "/".into();
+    }
+    if path.starts_with('/') {
+        if path.starts_with("//") {
+            return "/".into();
+        }
+        path.to_string()
+    } else {
+        format!("/{path}")
     }
 }
 
@@ -256,4 +309,39 @@ fn default_challenge_page(site_key: &str, challenge_path: &str) -> String {
 </body>
 </html>"#
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::safe_redirect;
+
+    #[test]
+    fn same_site_targets_are_kept() {
+        assert_eq!(safe_redirect(Some("/account?x=1"), "app.test"), "/account?x=1");
+        assert_eq!(
+            safe_redirect(Some("https://app.test/cart?id=2"), "app.test"),
+            "/cart?id=2"
+        );
+        assert_eq!(safe_redirect(Some("http://APP.test"), "app.test"), "/");
+        assert_eq!(safe_redirect(Some("https://app.test:8443/a"), "app.test:8443"), "/a");
+        assert_eq!(safe_redirect(Some("https://app.test?q"), "app.test"), "/?q");
+    }
+
+    #[test]
+    fn foreign_and_tricky_targets_fall_back_to_root() {
+        for t in [
+            "https://evil.test/",
+            "//evil.test/x",
+            "/\\evil.test",
+            "javascript:alert(1)",
+            "https://app.test@evil.test/",
+            "https://evil.test/app.test",
+            "https://app.test//evil.test",
+            "/a\r\nSet-Cookie: x=1",
+            "",
+        ] {
+            assert_eq!(safe_redirect(Some(t), "app.test"), "/", "{t}");
+        }
+        assert_eq!(safe_redirect(None, "app.test"), "/");
+    }
 }

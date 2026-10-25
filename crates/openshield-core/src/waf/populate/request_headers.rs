@@ -180,6 +180,13 @@ pub fn request_fields(ctx: &mut ExecutionContext<'static>, scheme: &Scheme, req:
     set_field!(
         ctx,
         scheme,
+        "http.request.uri.path.normalized",
+        Bytes,
+        crate::waf::normalize::normalize_path(&req.path).as_bytes()
+    );
+    set_field!(
+        ctx,
+        scheme,
         "http.request.uri.path.extension",
         Bytes,
         req.extension.as_bytes()

@@ -143,7 +143,7 @@ impl Engine {
                     content_type,
                     content,
                 } => {
-                    info!("BLOCK by rule '{}' (status {})", rule.id, status_code);
+                    debug!("BLOCK by rule '{}' (status {})", rule.id, status_code);
                     return RuleAction::Block {
                         rule_id: rule.id.clone(),
                         status_code: *status_code,
@@ -153,14 +153,14 @@ impl Engine {
                     };
                 }
                 Action::Allow => {
-                    info!("ALLOW by rule '{}'", rule.id);
+                    debug!("ALLOW by rule '{}'", rule.id);
                     return RuleAction::Allow {
                         rule_id: rule.id.clone(),
                         log: rule.logging,
                     };
                 }
                 Action::Log => {
-                    info!("LOG by rule '{}'", rule.id);
+                    debug!("LOG by rule '{}'", rule.id);
                     if rule.logging {
                         matched_rules.push((rule.id.clone(), "log".into()));
                     }
@@ -176,7 +176,7 @@ impl Engine {
                     }
                 }
                 Action::Challenge => {
-                    info!("CHALLENGE by rule '{}'", rule.id);
+                    debug!("CHALLENGE by rule '{}'", rule.id);
                     return RuleAction::Challenge {
                         rule_id: rule.id.clone(),
                         log: rule.logging,

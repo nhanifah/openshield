@@ -1,0 +1,22 @@
+[package]
+name = "openshield-testkit"
+description = "Test and benchmark helpers for OpenShield: an echo upstream and a mock Gemini API"
+version.workspace = true
+edition.workspace = true
+publish = false
+
+[[bin]]
+name = "echo-upstream"
+path = "src/bin/echo_upstream.rs"
+
+[[bin]]
+name = "mock-gemini"
+path = "src/bin/mock_gemini.rs"
+
+[dependencies]
+tokio = { version = ">=1.53.3, <1.54", features = ["rt-multi-thread", "net", "macros", "time"] }
+hyper = { version = "1", features = ["server", "http1"] }
+hyper-util = { version = "0.1", features = ["tokio"] }
+http-body-util = "0.1"
+bytes.workspace = true
+serde_json.workspace = true

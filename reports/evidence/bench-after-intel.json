@@ -1,0 +1,196 @@
+{
+  "meta": {
+    "tag": "after-intel",
+    "time": "2026-10-24T20:29:43Z",
+    "machine": "arm64 macOS-26.5-arm64-arm-64bit",
+    "cpu_count": 10,
+    "duration_s": 10,
+    "runs": 3,
+    "connections": 64,
+    "proxy_workers": 4,
+    "load_generator": "oha 1.16.0",
+    "git": "07d35a0"
+  },
+  "results": {
+    "proxy_rules_benign_get": {
+      "runs": [
+        {
+          "rps": 20148.50286003861,
+          "success_rate": 1.0,
+          "p50_ms": 2.5230420000000002,
+          "p95_ms": 7.262083,
+          "p99_ms": 13.426209,
+          "status_codes": {
+            "200": 201519
+          },
+          "cpu_pct_avg": 304.49,
+          "rss_mb_max": 121.390625,
+          "requests": 201519,
+          "errors": {
+            "aborted due to deadline": 63
+          }
+        },
+        {
+          "rps": 20003.744560306382,
+          "success_rate": 1.0,
+          "p50_ms": 2.57925,
+          "p95_ms": 7.061458,
+          "p99_ms": 12.49975,
+          "status_codes": {
+            "200": 200038
+          },
+          "cpu_pct_avg": 296.38,
+          "rss_mb_max": 191.828125,
+          "requests": 200038,
+          "errors": {
+            "aborted due to deadline": 63
+          }
+        },
+        {
+          "rps": 20640.739748261385,
+          "success_rate": 1.0,
+          "p50_ms": 2.5502920000000002,
+          "p95_ms": 6.626583999999999,
+          "p99_ms": 12.274375000000001,
+          "status_codes": {
+            "200": 206407
+          },
+          "cpu_pct_avg": 310.565,
+          "rss_mb_max": 296.421875,
+          "requests": 206407,
+          "errors": {
+            "aborted due to deadline": 63
+          }
+        }
+      ],
+      "median": {
+        "rps": 20148.50286003861,
+        "p50_ms": 2.5502920000000002,
+        "p95_ms": 7.061458,
+        "p99_ms": 12.49975,
+        "cpu_pct_avg": 304.49,
+        "rss_mb_max": 191.828125
+      }
+    },
+    "proxy_rules_attack_get": {
+      "runs": [
+        {
+          "rps": 38793.34814238081,
+          "success_rate": 1.0,
+          "p50_ms": 1.4040000000000001,
+          "p95_ms": 3.509167,
+          "p99_ms": 6.375666000000001,
+          "status_codes": {
+            "403": 388077
+          },
+          "cpu_pct_avg": 315.2714285714286,
+          "rss_mb_max": 409.734375,
+          "requests": 388077,
+          "errors": {
+            "aborted due to deadline": 64
+          }
+        },
+        {
+          "rps": 37685.86498204179,
+          "success_rate": 1.0,
+          "p50_ms": 1.381291,
+          "p95_ms": 3.8042499999999997,
+          "p99_ms": 7.297708,
+          "status_codes": {
+            "403": 377041
+          },
+          "cpu_pct_avg": 287.53333333333336,
+          "rss_mb_max": 290.125,
+          "requests": 377041,
+          "errors": {
+            "aborted due to deadline": 61
+          }
+        },
+        {
+          "rps": 35164.724212348345,
+          "success_rate": 1.0,
+          "p50_ms": 1.523333,
+          "p95_ms": 3.931584,
+          "p99_ms": 7.111,
+          "status_codes": {
+            "403": 351700
+          },
+          "cpu_pct_avg": 312.37142857142857,
+          "rss_mb_max": 306.5,
+          "requests": 351700,
+          "errors": {
+            "aborted due to deadline": 63
+          }
+        }
+      ],
+      "median": {
+        "rps": 37685.86498204179,
+        "p50_ms": 1.4040000000000001,
+        "p95_ms": 3.8042499999999997,
+        "p99_ms": 7.111,
+        "cpu_pct_avg": 312.37142857142857,
+        "rss_mb_max": 306.5
+      }
+    },
+    "proxy_rules_form_post": {
+      "runs": [
+        {
+          "rps": 17182.339041292507,
+          "success_rate": 1.0,
+          "p50_ms": 3.222791,
+          "p95_ms": 7.514625,
+          "p99_ms": 12.097292000000001,
+          "status_codes": {
+            "200": 171801
+          },
+          "cpu_pct_avg": 344.945,
+          "rss_mb_max": 253.859375,
+          "requests": 171801,
+          "errors": {
+            "aborted due to deadline": 62
+          }
+        },
+        {
+          "rps": 16236.030133259264,
+          "success_rate": 1.0,
+          "p50_ms": 3.363458,
+          "p95_ms": 7.9375409999999995,
+          "p99_ms": 13.912,
+          "status_codes": {
+            "200": 162324
+          },
+          "cpu_pct_avg": 326.795,
+          "rss_mb_max": 319.015625,
+          "requests": 162324,
+          "errors": {
+            "aborted due to deadline": 64
+          }
+        },
+        {
+          "rps": 15930.029566150666,
+          "success_rate": 1.0,
+          "p50_ms": 3.498916,
+          "p95_ms": 7.984,
+          "p99_ms": 12.953959,
+          "status_codes": {
+            "200": 159303
+          },
+          "cpu_pct_avg": 330.63,
+          "rss_mb_max": 372.234375,
+          "requests": 159303,
+          "errors": {
+            "aborted due to deadline": 64
+          }
+        }
+      ],
+      "median": {
+        "rps": 16236.030133259264,
+        "p50_ms": 3.363458,
+        "p95_ms": 7.9375409999999995,
+        "p99_ms": 12.953959,
+        "cpu_pct_avg": 330.63,
+        "rss_mb_max": 319.015625
+      }
+    }
+  }
+}

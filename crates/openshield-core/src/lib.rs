@@ -12,6 +12,7 @@ pub mod config;
 pub mod firewall;
 pub mod geoip;
 pub mod logging;
+pub mod redact;
 pub mod transaction;
 pub mod waf;
 

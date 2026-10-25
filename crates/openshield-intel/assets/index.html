@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<meta name="referrer" content="no-referrer">
+<title>OpenShield Console</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%234cc2ff' d='M12 2 4 5v6c0 5 3.4 9.4 8 11 4.6-1.6 8-6 8-11V5z'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="app.css">
+<script src="app.js" defer></script>
+</head>
+<body>
+<svg class="sprite" aria-hidden="true" focusable="false" xmlns="http://www.w3.org/2000/svg">
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 2.5 4.5 5.4v5.9c0 4.7 3.2 8.9 7.5 10.2 4.3-1.3 7.5-5.5 7.5-10.2V5.4z"/></symbol>
+  <symbol id="i-overview" viewBox="0 0 24 24"><path d="M3 12h4l3-8 4 16 3-8h4"/></symbol>
+  <symbol id="i-live" viewBox="0 0 24 24"><circle cx="12" cy="12" r="2.2"/><path d="M7.8 7.8a6 6 0 0 0 0 8.4M16.2 16.2a6 6 0 0 0 0-8.4M5 5a10 10 0 0 0 0 14M19 19a10 10 0 0 0 0-14"/></symbol>
+  <symbol id="i-events" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></symbol>
+  <symbol id="i-alerts" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.7 21a2 2 0 0 1-3.4 0"/></symbol>
+  <symbol id="i-controls" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></symbol>
+  <symbol id="i-policy" viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8zM14 2v6h6M10 13l-2 2 2 2M14 13l2 2-2 2"/></symbol>
+  <symbol id="i-labels" viewBox="0 0 24 24"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8zM7.5 7.5h.01"/></symbol>
+  <symbol id="i-ai" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 9h6v6H9zM9 1.5V5M15 1.5V5M9 19v3.5M15 19v3.5M1.5 9H5M1.5 15H5M19 9h3.5M19 15h3.5"/></symbol>
+  <symbol id="i-audit" viewBox="0 0 24 24"><path d="M9 3h6v3H9zM16 4.5h2a2 2 0 0 1 2 2V20a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6.5a2 2 0 0 1 2-2h2M8 12h8M8 16h5"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+  <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
+  <symbol id="i-menu" viewBox="0 0 24 24"><path d="M3 6h18M3 12h18M3 18h18"/></symbol>
+  <symbol id="i-close" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><path d="M7 4h3v16H7zM14 4h3v16h-3z"/></symbol>
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M6 4l14 8-14 8z"/></symbol>
+  <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-2.6-6.4M21 3v6h-6"/></symbol>
+  <symbol id="i-filter" viewBox="0 0 24 24"><path d="M22 3H2l8 9.5V19l4 2v-8.5z"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></symbol>
+  <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
+  <symbol id="i-bot" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4M9 13h.01M15 13h.01M9 17h6"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
+</svg>
+
+<noscript><p class="noscript">The OpenShield console needs JavaScript.</p></noscript>
+
+<main id="login" class="login" hidden>
+  <form id="login-form" class="login-card" autocomplete="off" novalidate>
+    <div class="login-brand">
+      <svg class="ico ico-lg" aria-hidden="true"><use href="#i-shield"/></svg>
+      <div>
+        <h1>OpenShield</h1>
+        <p class="muted">Security console</p>
+      </div>
+    </div>
+    <label for="login-token">Admin token</label>
+    <div class="input-row">
+      <input id="login-token" name="token" type="password" autocomplete="current-password" spellcheck="false" required aria-describedby="login-help login-error">
+      <button type="button" id="login-reveal" class="btn btn-icon" aria-label="Show token" aria-pressed="false"><svg class="ico" aria-hidden="true"><use href="#i-eye"/></svg></button>
+    </div>
+    <p id="login-error" class="form-error" role="alert"></p>
+    <button type="submit" id="login-submit" class="btn btn-primary btn-block">Sign in</button>
+    <p id="login-help" class="hint">The token is sent as a bearer token and kept only in this tab's session storage. Closing the tab signs you out.</p>
+  </form>
+</main>
+
+<div id="app" class="shell" hidden>
+  <header class="topbar">
+    <button type="button" id="nav-toggle" class="btn btn-icon nav-toggle" aria-label="Open navigation" aria-expanded="false" aria-controls="sidenav"><svg class="ico" aria-hidden="true"><use href="#i-menu"/></svg></button>
+    <a class="brand" href="#/overview" aria-label="OpenShield overview"><svg class="ico" aria-hidden="true"><use href="#i-shield"/></svg><span>OpenShield</span></a>
+    <div id="conn" class="conn" role="status" aria-live="polite"><span class="conn-dot" aria-hidden="true"></span><span id="conn-text">Offline</span></div>
+    <div id="rps" class="rps" title="Requests per second (last stats tick)"><span id="rps-val">–</span> <span class="muted">req/s</span></div>
+    <div class="topbar-spacer"></div>
+    <div id="detect-banner" class="pill pill-warn" hidden>Monitoring only</div>
+    <div class="user" id="user-chip"><svg class="ico" aria-hidden="true"><use href="#i-user"/></svg><span id="user-name"></span><span id="user-role" class="role"></span></div>
+    <button type="button" id="theme-toggle" class="btn btn-icon" aria-label="Switch to light theme"><svg class="ico" aria-hidden="true"><use id="theme-icon" href="#i-sun"/></svg></button>
+    <button type="button" id="logout" class="btn btn-icon" aria-label="Sign out"><svg class="ico" aria-hidden="true"><use href="#i-logout"/></svg></button>
+  </header>
+  <nav id="sidenav" class="sidenav" aria-label="Sections">
+    <a href="#/overview" data-view="overview"><svg class="ico" aria-hidden="true"><use href="#i-overview"/></svg><span>Overview</span></a>
+    <a href="#/live" data-view="live"><svg class="ico" aria-hidden="true"><use href="#i-live"/></svg><span>Live</span></a>
+    <a href="#/events" data-view="events"><svg class="ico" aria-hidden="true"><use href="#i-events"/></svg><span>Events</span></a>
+    <a href="#/alerts" data-view="alerts"><svg class="ico" aria-hidden="true"><use href="#i-alerts"/></svg><span>Alerts</span><span id="alert-count" class="nav-count" hidden></span></a>
+    <a href="#/controls" data-view="controls"><svg class="ico" aria-hidden="true"><use href="#i-controls"/></svg><span>Controls</span></a>
+    <a href="#/policy" data-view="policy"><svg class="ico" aria-hidden="true"><use href="#i-policy"/></svg><span>Policy</span></a>
+    <a href="#/labels" data-view="labels"><svg class="ico" aria-hidden="true"><use href="#i-labels"/></svg><span>Labels &amp; datasets</span></a>
+    <a href="#/ai" data-view="ai"><svg class="ico" aria-hidden="true"><use href="#i-ai"/></svg><span>AI</span></a>
+    <a href="#/audit" data-view="audit" data-min-role="admin"><svg class="ico" aria-hidden="true"><use href="#i-audit"/></svg><span>Audit</span></a>
+  </nav>
+  <div id="nav-scrim" class="scrim" hidden></div>
+  <main id="view" class="view" tabindex="-1"></main>
+</div>
+
+<div id="drawer-scrim" class="scrim scrim-drawer" hidden></div>
+<aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden>
+  <header class="drawer-head">
+    <h2 id="drawer-title">Event</h2>
+    <button type="button" id="drawer-close" class="btn btn-icon" aria-label="Close event details"><svg class="ico" aria-hidden="true"><use href="#i-close"/></svg></button>
+  </header>
+  <div id="drawer-body" class="drawer-body"></div>
+</aside>
+
+<dialog id="modal" class="modal" aria-labelledby="modal-title">
+  <form id="modal-form" method="dialog" novalidate>
+    <h2 id="modal-title"></h2>
+    <div id="modal-body" class="modal-body"></div>
+    <p id="modal-error" class="form-error" role="alert"></p>
+    <div class="modal-actions">
+      <button type="button" id="modal-cancel" class="btn">Cancel</button>
+      <button type="submit" id="modal-ok" class="btn btn-primary">OK</button>
+    </div>
+  </form>
+</dialog>
+
+<div id="toasts" class="toasts" aria-live="polite" aria-atomic="false"></div>
+</body>
+</html>

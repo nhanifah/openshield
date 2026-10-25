@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/openshield-openapi", "crates/openshield-core", "crates/openshield-pingora"]
+members = ["crates/openshield-openapi", "crates/openshield-core", "crates/openshield-pingora", "crates/openshield-testkit", "crates/openshield-intel"]
 
 [workspace.package]
 version = "0.2.0"
@@ -9,8 +9,10 @@ edition = "2024"
 [workspace.dependencies]
 openshield-openapi = { path = "crates/openshield-openapi" }
 openshield-core = { path = "crates/openshield-core" }
+openshield-intel = { path = "crates/openshield-intel" }
 
-wirefilter-engine = { git = "https://github.com/cloudflare/wirefilter.git", branch = "master", package = "wirefilter-engine" }
+# Pinned: a moving branch let `cargo update` pull unreviewed upstream changes.
+wirefilter-engine = { git = "https://github.com/cloudflare/wirefilter.git", rev = "123ab587984ebf8be297f0d531e7256046156dc9", package = "wirefilter-engine" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 erased-serde = "0.4"
@@ -40,7 +42,7 @@ base64 = "0.22"
 mimalloc = "0.1"
 pingora-limits = "0.9.0"
 pingora-prometheus = "0.9.0"
-uuid = { version = "1.23.0", features = ["v4"] }
+uuid = { version = "1.23.0", features = ["v4", "fast-rng"] }
 sha1 = "0.11.0"
 html-escape = "0.2.13"
 reqwest = { version = "0.13.2", default-features = false, features = ["rustls", "json", "form"] }

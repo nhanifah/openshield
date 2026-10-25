@@ -1,0 +1,61 @@
+# End-to-end test configuration. Ports are fixed so the harness can find them.
+listen: "127.0.0.1:18080"
+upstream: "http://127.0.0.1:13000"
+workers: 2
+pid_file: "/tmp/openshield-e2e.pid"
+upgrade_sock: "/tmp/openshield-e2e-upgrade.sock"
+logging:
+  format: json
+  access_log: "__LOGDIR__/access.log"
+  audit_log: "__LOGDIR__/audit.log"
+metrics:
+  listen: "127.0.0.1:19090"
+max_request_body_buffer: 65536
+request_body_limit_action: reject
+inspect_response_body: true
+log_payloads: true
+rulesets:
+  - name: main
+    kind: root
+    rules:
+      - id: block-admin
+        action: block
+        expression: 'http.request.uri.path.normalized == "/admin"'
+      - id: block-sqli-args
+        action: block
+        expression: "any(detect_sqli(url_decode_uni(http.request.uri.args.values[*])))"
+      - id: block-xss-args
+        action: block
+        expression: "any(detect_xss(url_decode_uni(http.request.uri.args.values[*])))"
+      - id: block-sqli-headers
+        action: block
+        expression: "any(detect_sqli(http.request.headers.values[*]))"
+      - id: block-bad-ua
+        action: block
+        expression: 'lower(http.user_agent) contains "sqlmap"'
+      - id: ratelimit-login
+        action: block
+        expression: 'http.request.uri.path == "/login"'
+        action_parameters:
+          response:
+            status_code: 429
+            content: "rate limited"
+        ratelimit:
+          characteristics: [ip.src]
+          period: 10
+          requests_per_period: 5
+      - id: block-sqli-form
+        phase: request_body
+        action: block
+        expression: "any(detect_sqli(http.request.body.form.values[*]))"
+      - id: block-sqli-multipart
+        phase: request_body
+        action: block
+        expression: "any(detect_sqli(http.request.body.multipart.values[*]))"
+      - id: redact-secret
+        phase: response_body
+        action: block
+        expression: 'http.response.body.raw contains "secret-token"'
+        action_parameters:
+          response:
+            content: "[redacted]"

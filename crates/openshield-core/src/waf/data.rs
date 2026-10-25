@@ -1,5 +1,6 @@
 use std::net::IpAddr;
 
+#[derive(Debug, Clone)]
 pub struct RequestData {
     pub client_ip: Option<IpAddr>,
     pub is_tls: bool,
@@ -15,6 +16,7 @@ pub struct RequestData {
     pub geo: Option<GeoData>,
 }
 
+#[derive(Debug, Clone)]
 pub struct GeoData {
     pub asn: Option<u32>,
     pub is_in_european_union: bool,
@@ -30,6 +32,7 @@ pub struct GeoData {
     pub timezone: Option<String>,
 }
 
+#[derive(Debug, Clone)]
 pub struct ResponseData {
     pub status: u16,
     pub headers: Vec<(String, String)>,

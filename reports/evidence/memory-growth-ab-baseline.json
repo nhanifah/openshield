@@ -1,0 +1,23 @@
+{
+  "tag": "ab-baseline",
+  "points": [
+    {
+      "unique_keys": 0,
+      "rss_mb": 26.21875
+    },
+    {
+      "unique_keys": 100000,
+      "rss_mb": 39.703125
+    },
+    {
+      "unique_keys": 200000,
+      "rss_mb": 51.78125
+    },
+    {
+      "unique_keys": 300000,
+      "rss_mb": 70.046875
+    }
+  ],
+  "growth_mb": 43.828125,
+  "bytes_per_key": 153.1904
+}
