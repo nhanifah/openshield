@@ -2206,7 +2206,9 @@ name = "openshield-intel"
 version = "0.2.0"
 dependencies = [
  "arc-swap",
+ "aws-lc-rs",
  "axum",
+ "base64 0.22.1",
  "bytes",
  "chrono",
  "futures-util",
