@@ -155,6 +155,7 @@ admin:
   listen: 127.0.0.1:9091
   require_second_approver: false
   users:
+    # Optional: leave empty to create users in the dashboard (first-run setup).
     - {name: alice, role: admin, token_sha256: "<sha256 of the token, hex>"}
     - {name: soc, role: analyst, token_env: OPENSHIELD_SOC_TOKEN}
 ```
@@ -165,7 +166,15 @@ admin:
 
 **AI.** Analysis is asynchronous and advisory: verdicts never change what the proxy does, and an outage, timeout or exhausted budget only leaves events without a verdict. Requests sent to the provider contain an allow-list of redacted fields and a keyed hash instead of the client IP. Pick the model id from your provider's current model list.
 
-**Admin users.** Generate a token and store only its hash:
+**Dashboard settings.** AI (API key, model, limits), event storage, Turnstile keys and admin users can all be managed under **Settings** in the dashboard. A section saved there overrides the config file until you reset it; changes apply without a restart. Secrets are encrypted at rest (see [admin API](admin-api.md#encryption-at-rest)). Back up `openshield-secret.key` separately from the database: without it, saved secrets cannot be read and must be entered again. Set `OPENSHIELD_SECRET_KEY` (32 random bytes, base64) to keep the key out of the data directory entirely.
+
+**First run.** With `admin.users` empty, the server writes a one-time setup token to `openshield-setup-token` (mode 0600) next to the database and logs where it is. Sign in with it, create an admin under Settings, then sign in with the admin's token. Read it with:
+
+```bash
+cat /var/lib/openshield/openshield-setup-token
+```
+
+**Admin users in the config file.** Generate a token and store only its hash:
 
 ```bash
 openssl rand -hex 32 | tee /dev/stderr | tr -d '\n' | shasum -a 256

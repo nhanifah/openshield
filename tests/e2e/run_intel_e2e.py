@@ -36,6 +36,15 @@ MOCK = "http://127.0.0.1:13900"
 METRICS = "http://127.0.0.1:19092/metrics"
 
 TOKENS = {k: "tok-" + secrets.token_hex(16) for k in ("alice", "bob", "ana", "val")}
+LOGDIR = None  # set in main()
+
+
+def db_bytes():
+    """All bytes of the intel database files (main, WAL, shared memory)."""
+    out = b""
+    for f in Path(LOGDIR).glob("intel.db*"):
+        out += f.read_bytes()
+    return out
 GEMINI_KEY = "test-key-" + secrets.token_hex(8)
 
 
@@ -390,6 +399,95 @@ def t_challenge(ctx):
     return ok, f"first={first.status} bad={bad.status} good={good.status} with_cookie={after and after.status} cookie_other_ip={other_ip and other_ip.status}"
 
 
+@test("I22", "Settings are admin-only and never return secret values", "high")
+def t_settings_access(ctx):
+    a, _, _ = api("GET", "/api/settings", "ana")
+    b, body, _ = api("GET", "/api/settings", "alice")
+    text = json.dumps(body)
+    leaked = GEMINI_KEY in text or "e2e-cookie-secret" in text or "test-secret" in text
+    ok = a == 403 and b == 200 and body["ai"]["api_key"]["set"] is True and not leaked and body["security"]["encryption"] == "AES-256-GCM"
+    return ok, f"analyst={a} admin={b} key_set={body.get('ai', {}).get('api_key', {}).get('set')} leaked={leaked}"
+
+
+@test("I23", "AI key saved in the dashboard is used for calls and stored encrypted", "high")
+def t_settings_ai_key(ctx):
+    mock("/_reset", "")
+    new_key = "dash-key-" + secrets.token_hex(8)
+    _, cur, _ = api("GET", "/api/settings", "alice")
+    vals = dict(cur["ai"]["values"])
+    st, res, _ = api("PUT", "/api/settings/ai", "alice", {**vals, "api_key": new_key})
+    as_client("203.0.113.130", "GET", "/search?q=1%27%20OR%20%271%27%3D%271")
+    time.sleep(2.5)
+    reqs = mock("/_requests")
+    used = [v for r in reqs for k, v in r["headers"] if k == "x-goog-api-key"]
+    t_st, test, _ = api("POST", "/api/settings/ai/test", "alice")
+    in_db = new_key.encode() in db_bytes()
+    # Remove the dashboard key: the environment key applies again.
+    api("PUT", "/api/settings/ai", "alice", {**vals, "api_key": ""})
+    # The previous supervisor may finish calls it already had in flight with
+    # the old key; calls made after the save must use the new one.
+    ok = st == 200 and res.get("running") and used and used[-1] == new_key and test.get("ok") and not in_db
+    n_new = sum(1 for u in used if u == new_key)
+    return ok, f"save={st} running={res.get('running')} calls={len(used)} with_new_key={n_new} last_call_new_key={bool(used) and used[-1] == new_key} test_ok={test.get('ok')} plaintext_in_db={in_db}"
+
+
+@test("I24", "Users: create, rotate and revoke tokens; tokens shown once, stored hashed", "high")
+def t_users(ctx):
+    st, u, _ = api("POST", "/api/users", "alice", {"name": "e2e-ana2", "role": "analyst"})
+    tok = u.get("token", "")
+    me_ok = api("GET", "/api/me", tok)[1].get("name") == "e2e-ana2"
+    _, lst, _ = api("GET", "/api/users", "alice")
+    listed_without_token = all("token" not in x and "token_sha256" not in x for x in lst["users"])
+    dup, _, _ = api("POST", "/api/users", "alice", {"name": "e2e-ana2", "role": "viewer"})
+    _, r, _ = api("POST", "/api/users/e2e-ana2/rotate", "alice")
+    old_after_rotate = api("GET", "/api/me", tok)[0]
+    new_ok = api("GET", "/api/me", r["token"])[0]
+    role_st, _, _ = api("PUT", "/api/users/e2e-ana2", "alice", {"role": "viewer"})
+    self_del, _, _ = api("DELETE", "/api/users/alice", "alice")
+    analyst_create, _, _ = api("POST", "/api/users", "ana", {"name": "x", "role": "admin"})
+    del_st, _, _ = api("DELETE", "/api/users/e2e-ana2", "alice")
+    after_revoke = api("GET", "/api/me", r["token"])[0]
+    hashed = tok.encode() not in db_bytes() and r["token"].encode() not in db_bytes()
+    ok = (st == 200 and tok.startswith("osk_") and me_ok and listed_without_token and dup == 409 and old_after_rotate == 401
+          and new_ok == 200 and role_st == 200 and self_del in (400, 404) and analyst_create == 403 and del_st == 200
+          and after_revoke == 401 and hashed)
+    return ok, (f"create={st} works={me_ok} dup={dup} old_after_rotate={old_after_rotate} new={new_ok} role={role_st} "
+                f"self_delete={self_del} analyst_create={analyst_create} revoke={del_st} after_revoke={after_revoke} tokens_not_in_db={hashed}")
+
+
+@test("I25", "Storage settings apply at once: sampling off stores only notable events", "medium")
+def t_settings_storage(ctx):
+    _, cur, _ = api("GET", "/api/settings", "alice")
+    vals = dict(cur["storage"]["values"])
+    st, _, _ = api("PUT", "/api/settings/storage", "alice", {**vals, "store_all_events": False, "benign_sample_rate": 0.0, "per_client_per_sec": 0})
+    ip = "203.0.113.140"
+    r1 = as_client(ip, "GET", "/echo/plain-storage-test")
+    rid = r1.header("x-request-id")
+    as_client(ip, "GET", "/admin?storage-test=1")
+    blocked = wait_for(lambda: find_event(lambda e: e["path"] == "/admin", ip=ip))
+    time.sleep(0.5)
+    plain = find_event(lambda e: e["id"] == rid, ip=ip)
+    bad, _, _ = api("PUT", "/api/settings/storage", "alice", {**vals, "benign_sample_rate": 5})
+    rs, _, _ = api("DELETE", "/api/settings/storage", "alice")
+    ok = st == 200 and blocked is not None and plain is None and bad == 400 and rs == 200
+    return ok, f"save={st} notable_stored={blocked is not None} ordinary_stored={plain is not None} invalid={bad} reset={rs}"
+
+
+@test("I26", "Turnstile settings create a policy version; secrets stay encrypted and masked", "high")
+def t_settings_challenge(ctx):
+    secret = "ts-secret-" + secrets.token_hex(6)
+    st, r, _ = api("PUT", "/api/settings/challenge", "alice", {"enabled": True, "site_key": "site-xyz", "secret_key": secret,
+                                                                "challenge_path": "/__openshield/challenge", "cookie_ttl": 3600})
+    _, pol, _ = api("GET", "/api/policy")
+    _, view, _ = api("GET", "/api/settings", "alice")
+    in_db = secret.encode() in db_bytes()
+    masked = secret not in pol["yaml"] and "__secret_unchanged__" in pol["yaml"]
+    ch = view["challenge"]
+    still_works = as_client("203.0.113.150", "GET", "/protected/x").status == 403
+    ok = st == 200 and r.get("status") == "applied" and masked and not in_db and ch["secret_key_set"] and ch["site_key"] == "site-xyz" and still_works
+    return ok, f"save={st}/{r.get('status')} policy_masked={masked} plaintext_in_db={in_db} site_key={ch.get('site_key')} challenge_served={still_works}"
+
+
 @test("I21", "Failed admin logins are rate limited", "medium")
 def t_login_ratelimit(ctx):
     codes = [api("GET", "/api/me", token=f"guess-{i}")[0] for i in range(12)]
@@ -401,7 +499,9 @@ def main():
     ap.add_argument("--tag", default="run")
     ap.add_argument("--only", default="")
     args = ap.parse_args()
+    global LOGDIR
     logdir = Path(tempfile.mkdtemp(prefix="openshield-intel-e2e-"))
+    LOGDIR = logdir
     env = {**os.environ, "RUST_LOG": "openshield=info,pingora=warn", "OS_E2E_GEMINI_KEY": GEMINI_KEY,
            "OS_E2E_ADMIN": TOKENS["alice"], "OS_E2E_ADMIN2": TOKENS["bob"], "OS_E2E_ANALYST": TOKENS["ana"], "OS_E2E_VIEWER": TOKENS["val"]}
     procs = []

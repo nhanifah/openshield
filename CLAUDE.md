@@ -27,6 +27,7 @@ Rust reverse proxy and WAF on Pingora and Wirefilter. Crates:
 - Everything from a request (paths, headers, bodies) and everything an AI model returns is untrusted. Redact with `openshield_core::redact::Redactor` before it is logged, stored or sent anywhere.
 - AI verdicts are advisory. Nothing in the request path may depend on them.
 - Every admin API state change is role-checked and written to the admin audit log.
+- Secrets saved from the dashboard go through `vault::Vault` (AES-256-GCM, value name as associated data) and are never returned by the API; admin tokens are stored as SHA-256 digests only. A new kind of secret must follow the same path.
 
 ## Dashboard UI guidelines (`crates/openshield-intel/assets/`)
 
@@ -37,7 +38,7 @@ The dashboard is an operational security console: operators open it to decide wh
 - Exactly three files: `index.html`, `app.css`, `app.js`, embedded with `include_str!`. No build step, no frameworks, no CDN, no web fonts.
 - CSP is `default-src 'self'; script-src 'self'; style-src 'self'`: no inline `<script>`, no `on…=` attributes, no `style="…"` in markup or via `setAttribute('style')` (setting `el.style.prop` from JS is allowed).
 - Render every API string with `textContent` or text nodes. The `h()` helper refuses `innerHTML`; keep it that way.
-- Keep the three files under about 170 KB in total.
+- Keep the three files under about 200 KB in total (187 KB with the Settings page).
 
 ### Information hierarchy
 

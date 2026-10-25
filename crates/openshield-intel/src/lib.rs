@@ -19,7 +19,9 @@ pub mod hub;
 pub mod metrics;
 pub mod policy;
 pub mod runtime;
+pub mod settings;
 pub mod stats;
 pub mod store;
+pub mod vault;
 
 pub use runtime::Intel;

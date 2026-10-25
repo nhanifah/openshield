@@ -4,7 +4,13 @@ The admin server is a separate listener (default `127.0.0.1:9091`) that serves t
 
 ## Authentication and roles
 
-Every `/api/` request needs `Authorization: Bearer <token>`. Tokens are configured as SHA-256 hex digests (`token_sha256`) or read from an environment variable (`token_env`), never stored in clear in the config. Ten failed attempts per minute from one address return `429`.
+Every `/api/` request needs `Authorization: Bearer <token>`. Users come from three places:
+
+- **Config file** (`admin.users`): tokens as SHA-256 digests (`token_sha256`) or read from an environment variable (`token_env`). Not editable in the dashboard.
+- **Dashboard** (Settings, Users & tokens): an admin creates the user and receives a random `osk_…` token once. Only its SHA-256 digest is stored.
+- **First-run setup**: when no admin exists anywhere, the server writes a one-time token to `openshield-setup-token` (mode 0600) next to the database. Sign in with it and create an admin. The setup token stops working once that admin signs in, and the file is deleted.
+
+Ten failed attempts per minute from one address return `429`.
 
 | Role | Can |
 | --- | --- |
@@ -189,3 +195,33 @@ Label `source`: `operator` (a person), `ai_candidate` (a model suggestion, never
 ### Admin audit
 
 `GET /api/audit?limit=200` (admin) → `{"entries": [{"id","ts","actor","role","action","target","detail","result","ip"}]}`
+
+### Settings (admin)
+
+Values saved here replace the config file's values for that section until reset, and apply without a restart. Secret values are write-only: responses say only whether one is set, who set it and when.
+
+| Method | Path | Body / response |
+| --- | --- | --- |
+| GET | `/api/settings` | `{"ai": {"values", "source", "api_key": {"set", "source"}, "running", "off_reason"}, "storage": {"values", "source"}, "challenge": {"enabled", "site_key", "secret_key_set", "cookie_secret_set", "challenge_path", "cookie_ttl"}, "security": {"encryption", "secret_key_source", "setup_mode"}}` |
+| PUT | `/api/settings/ai` | `{"enabled", "model", "base_url", "timeout_ms", "requests_per_minute", "max_calls_per_day", "triggers", "send_body", "price_per_mtok_in", "price_per_mtok_out", "api_key"?}`. Leave out `api_key` to keep the current key; `""` removes it. Rebuilds the AI supervisor. |
+| DELETE | `/api/settings/ai` | Back to the config file's values (a saved key stays until removed) |
+| POST | `/api/settings/ai/test` | One small call with the saved settings: `{"ok", "latency_ms", "model_version"}` or `{"ok": false, "error"}` |
+| PUT | `/api/settings/storage` | `{"store_all_events", "benign_sample_rate", "per_client_per_sec", "retention_days", "max_events", "body_excerpt_bytes"}` |
+| DELETE | `/api/settings/storage` | Back to the config file's values |
+| PUT | `/api/settings/challenge` | `{"enabled", "site_key", "secret_key"?, "challenge_path", "cookie_ttl", "rotate_cookie_secret"}`. Saved as a new policy version (or a pending change in second-approver mode). A cookie signing key is generated when none exists. |
+
+### Users (admin)
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/api/users` | Config and dashboard users, no token data |
+| POST | `/api/users` | `{"name", "role"}` → `{"name", "role", "token"}`; the token is shown only here |
+| POST | `/api/users/{name}/rotate` | New token, shown once; the old one stops working |
+| PUT | `/api/users/{name}` | `{"role"}`; you cannot change your own role or demote the last admin |
+| DELETE | `/api/users/{name}` | Revoke; you cannot revoke yourself or the last admin |
+
+Config-file users cannot be changed through these endpoints.
+
+### Encryption at rest
+
+AES-256-GCM, with a random nonce for each value and the value's name bound as associated data. Encrypted: the AI API key, every stored policy version (it can hold the Turnstile secret, cookie signing key and private JWK members), and pending change payloads. Admin tokens are stored as SHA-256 digests. The key comes from `OPENSHIELD_SECRET_KEY` (32 bytes, base64) or the file `openshield-secret.key` next to the database, created with mode 0600 on first start; a key file readable by other users is refused.

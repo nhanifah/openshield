@@ -94,7 +94,12 @@ pub struct EventHub {
     recent: Arc<RwLock<VecDeque<Arc<SecurityEvent>>>>,
     snapshots: Arc<Mutex<VecDeque<Snapshot>>>,
     pub stream: broadcast::Sender<StreamMsg>,
-    pub ai: Option<Arc<Supervisor>>,
+    /// Replaced when AI settings change; `None` while AI is off.
+    ai: arc_swap::ArcSwapOption<Supervisor>,
+    ai_tx: mpsc::UnboundedSender<Outcome>,
+    /// Why AI is off, for the status page.
+    ai_off_reason: Mutex<String>,
+    pub settings: Arc<crate::settings::Settings>,
     pub sanitizer: Arc<Sanitizer>,
     pub counters: Arc<HubCounters>,
     db_tx: std::sync::mpsc::SyncSender<DbMsg>,
@@ -106,10 +111,10 @@ impl EventHub {
         cfg: IntelConfig,
         store: Arc<Store>,
         controls: Arc<Controls>,
-        ai: Option<Arc<Supervisor>>,
-        ai_outcomes: Option<mpsc::UnboundedReceiver<Outcome>>,
+        settings: Arc<crate::settings::Settings>,
         sanitizer: Arc<Sanitizer>,
     ) -> Arc<Self> {
+        let (ai_tx, ai_outcomes) = mpsc::unbounded_channel();
         let (tx, rx) = mpsc::channel(cfg.events.queue_capacity);
         let (stream, _) = broadcast::channel(4096);
         // At most 16 pending batches (16,000 events) wait for the writer;
@@ -127,7 +132,10 @@ impl EventHub {
             store: Arc::clone(&store),
             controls,
             stream,
-            ai,
+            ai: arc_swap::ArcSwapOption::empty(),
+            ai_tx,
+            ai_off_reason: Mutex::new("disabled".into()),
+            settings,
             sanitizer,
             counters: Arc::clone(&counters),
             db_tx,
@@ -143,9 +151,7 @@ impl EventHub {
                 .expect("spawn db writer");
         }
         tokio::spawn(Arc::clone(&hub).ingest(rx));
-        if let Some(outcomes) = ai_outcomes {
-            tokio::spawn(Arc::clone(&hub).ai_results(outcomes));
-        }
+        tokio::spawn(Arc::clone(&hub).ai_results(ai_outcomes));
         tokio::spawn(Arc::clone(&hub).ticker());
         tokio::spawn(Arc::clone(&hub).maintenance());
         hub
@@ -197,9 +203,46 @@ impl EventHub {
         self.detector.lock().client(ip)
     }
 
+    /// The current AI supervisor, if AI is on.
+    pub fn ai(&self) -> Option<Arc<Supervisor>> {
+        self.ai.load_full()
+    }
+
+    pub fn ai_off_reason(&self) -> String {
+        self.ai_off_reason.lock().clone()
+    }
+
+    /// Build (or stop) the AI supervisor from the current settings. Call
+    /// inside the intel runtime. The previous supervisor finishes the calls
+    /// it has in flight and then stops.
+    pub fn reconfigure_ai(&self) -> Result<(), String> {
+        let cfg = (*self.settings.ai.load_full()).clone();
+        self.sanitizer.set_send_body(cfg.send_body);
+        if !cfg.enabled {
+            self.ai.store(None);
+            *self.ai_off_reason.lock() = "disabled in settings".into();
+            return Ok(());
+        }
+        let Some((key, source)) = self.settings.ai_key() else {
+            self.ai.store(None);
+            *self.ai_off_reason.lock() = "enabled, but no API key is set".into();
+            return Err("AI is enabled but no API key is set".into());
+        };
+        let client = crate::ai::gemini::GeminiClient::new(
+            &cfg.base_url,
+            &cfg.model,
+            key,
+            Duration::from_millis(cfg.timeout_ms),
+        )?;
+        let provider: Arc<dyn crate::ai::supervisor::Provider> = Arc::new(client);
+        log::info!("AI supervision: model {} at {} (key from {source})", cfg.model, cfg.base_url);
+        self.ai.store(Some(Supervisor::start(cfg, provider, self.ai_tx.clone())));
+        Ok(())
+    }
+
     /// Queue one event for AI analysis now (operator request).
     pub fn analyze(&self, ev: &SecurityEvent) -> Result<(), String> {
-        let ai = self.ai.as_ref().ok_or("AI analysis is disabled")?;
+        let ai = self.ai().ok_or("AI analysis is off")?;
         let job = Job {
             event_id: ev.id.clone(),
             fingerprint: format!("manual-{}", ev.id),
@@ -259,7 +302,7 @@ impl EventHub {
                         self.publish("event", &ev.summary());
                     }
                     if self.should_store(&ev) {
-                        if budget.take(&ev.client_ip, ev.ts / 1000, self.cfg.store.per_client_per_sec) {
+                        if budget.take(&ev.client_ip, ev.ts / 1000, self.settings.storage.load().per_client_per_sec) {
                             batch.push(ev);
                         } else {
                             self.counters.store_sampled_out.fetch_add(1, Ordering::Relaxed);
@@ -282,7 +325,7 @@ impl EventHub {
     /// `benign_sample_rate` unless `store_all_events` is set. Statistics
     /// count every request either way.
     fn should_store(&self, ev: &SecurityEvent) -> bool {
-        let st = &self.cfg.store;
+        let st = self.settings.storage.load();
         st.store_all_events || ev.is_notable() || (st.benign_sample_rate > 0.0 && sample(&ev.id) < st.benign_sample_rate)
     }
 
@@ -299,7 +342,7 @@ impl EventHub {
 
     /// Build the event, score it, and update in-memory state.
     fn process(&self, raw: RawEvent) -> Arc<SecurityEvent> {
-        let mut ev = build_event(&raw, self.cfg.store.body_excerpt_bytes);
+        let mut ev = build_event(&raw, self.settings.storage.load().body_excerpt_bytes);
         let now = ev.ts;
 
         let obs = self.detector.lock().observe(&ev, now);
@@ -334,7 +377,7 @@ impl EventHub {
             });
         }
 
-        if let Some(ai) = &self.ai
+        if let Some(ai) = self.ai()
             && self.eligible(&ev)
         {
             ai.offer(Job {
@@ -356,7 +399,7 @@ impl EventHub {
     }
 
     fn eligible(&self, ev: &SecurityEvent) -> bool {
-        let ai = &self.cfg.ai;
+        let ai = self.settings.ai.load();
         let triggered = ai.triggers.iter().any(|t| match t {
             AiTrigger::Block => ev.action == "block",
             AiTrigger::Challenge => ev.action == "challenge",
@@ -454,7 +497,7 @@ impl EventHub {
                 &serde_json::json!({"t": sec, "total": c.total, "pass": c.pass, "allow": c.allow,
                     "block": c.block, "challenge": c.challenge, "suspicious": c.suspicious, "p95_ms": p95}),
             );
-            if let Some(ai) = &self.ai {
+            if let Some(ai) = self.ai() {
                 let st = ai.status();
                 if st.state == "open" && last_ai_state != "open" {
                     self.raise_alert(&AlertDraft {
@@ -479,9 +522,10 @@ impl EventHub {
             self.controls.sweep(now);
             let _ = self.store.purge_expired_controls(now);
             if n % 10 == 0 {
-                let cutoff = now - self.cfg.store.retention_days as i64 * 86_400_000;
+                let st = self.settings.storage.load();
+                let cutoff = now - st.retention_days as i64 * 86_400_000;
                 let store = Arc::clone(&self.store);
-                let max = self.cfg.store.max_events;
+                let max = st.max_events;
                 let _ = tokio::task::spawn_blocking(move || match store.retain(cutoff, max) {
                     Ok(d) if d > 0 => log::info!("Retention: deleted {d} events"),
                     Err(e) => log::error!("Retention failed: {e}"),
@@ -687,7 +731,7 @@ pub fn component_states(hub: &EventHub) -> HashMap<&'static str, String> {
     m.insert("store", if hub.store.ping() { "ok" } else { "error" }.to_string());
     m.insert(
         "ai",
-        hub.ai.as_ref().map(|a| a.status().state).unwrap_or_else(|| "disabled".into()),
+        hub.ai().map(|a| a.status().state).unwrap_or_else(|| "disabled".into()),
     );
     m
 }

@@ -22,6 +22,7 @@
   <symbol id="i-labels" viewBox="0 0 24 24"><path d="M20.6 13.4 13.4 20.6a2 2 0 0 1-2.8 0L3 13V3h10l7.6 7.6a2 2 0 0 1 0 2.8zM7.5 7.5h.01"/></symbol>
   <symbol id="i-ai" viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/><path d="M9 9h6v6H9zM9 1.5V5M15 1.5V5M9 19v3.5M15 19v3.5M1.5 9H5M1.5 15H5M19 9h3.5M19 15h3.5"/></symbol>
   <symbol id="i-audit" viewBox="0 0 24 24"><path d="M9 3h6v3H9zM16 4.5h2a2 2 0 0 1 2 2V20a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6.5a2 2 0 0 1 2-2h2M8 12h8M8 16h5"/></symbol>
+  <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></symbol>
   <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
   <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
   <symbol id="i-logout" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></symbol>
@@ -69,6 +70,7 @@
     <div id="rps" class="rps" title="Requests per second (last stats tick)"><span id="rps-val">–</span> <span class="muted">req/s</span></div>
     <div class="topbar-spacer"></div>
     <div id="detect-banner" class="pill pill-warn" hidden>Monitoring only</div>
+    <span id="setup-chip" class="badge setup-chip" hidden>Setup mode</span>
     <div class="user" id="user-chip"><svg class="ico" aria-hidden="true"><use href="#i-user"/></svg><span id="user-name"></span><span id="user-role" class="role"></span></div>
     <button type="button" id="theme-toggle" class="btn btn-icon" aria-label="Switch to light theme"><svg class="ico" aria-hidden="true"><use id="theme-icon" href="#i-sun"/></svg></button>
     <button type="button" id="logout" class="btn btn-icon" aria-label="Sign out"><svg class="ico" aria-hidden="true"><use href="#i-logout"/></svg></button>
@@ -83,6 +85,7 @@
     <a href="#/labels" data-view="labels"><svg class="ico" aria-hidden="true"><use href="#i-labels"/></svg><span>Labels &amp; datasets</span></a>
     <a href="#/ai" data-view="ai"><svg class="ico" aria-hidden="true"><use href="#i-ai"/></svg><span>AI</span></a>
     <a href="#/audit" data-view="audit" data-min-role="admin"><svg class="ico" aria-hidden="true"><use href="#i-audit"/></svg><span>Audit</span></a>
+    <a href="#/settings" data-view="settings" data-min-role="admin"><svg class="ico" aria-hidden="true"><use href="#i-settings"/></svg><span>Settings</span></a>
   </nav>
   <div id="nav-scrim" class="scrim" hidden></div>
   <main id="view" class="view" tabindex="-1"></main>

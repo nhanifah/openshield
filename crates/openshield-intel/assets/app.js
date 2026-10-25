@@ -12,7 +12,7 @@
   const SEVERITIES = ['low', 'medium', 'high', 'critical'];
   const AI_CATEGORIES = ['legitimate', 'suspicious', 'malicious', 'policy_violation', 'unknown'];
   const TTLS = [[900, '15 minutes'], [3600, '1 hour'], [21600, '6 hours'], [86400, '24 hours'], [604800, '7 days'], [2592000, '30 days'], [0, 'No expiry']];
-  const TITLES = { overview: 'Overview', live: 'Live', events: 'Events', alerts: 'Alerts', controls: 'Controls', policy: 'Policy', labels: 'Labels & datasets', ai: 'AI', audit: 'Audit' };
+  const TITLES = { overview: 'Overview', live: 'Live', events: 'Events', alerts: 'Alerts', controls: 'Controls', policy: 'Policy', labels: 'Labels & datasets', ai: 'AI', audit: 'Audit', settings: 'Settings' };
   const SVGNS = 'http://www.w3.org/2000/svg';
   const $ = (id) => document.getElementById(id);
   const enc = encodeURIComponent;
@@ -2065,6 +2065,284 @@
     load();
   };
 
+  // ------------------------------------------------------------------ view: settings (admin)
+  // Secrets are write-only: the API only says whether one is set. Leaving a
+  // secret field empty keeps the stored value.
+  function checkbox(label, checked, hint) {
+    const box = h('input', { type: 'checkbox', checked: !!checked, id: uid('cb') });
+    const el = h('div', { class: 'field field-check' }, h('label', { for: box.id, class: 'check' }, box, h('span', { text: label })), hint ? h('p', { class: 'hint', text: hint }) : null);
+    return { el, box };
+  }
+  function numInput(value, min, max, step) {
+    return h('input', { type: 'number', value: value === null || value === undefined ? '' : String(value), min: String(min), max: String(max), step: String(step || 1), inputmode: 'decimal' });
+  }
+  function secretInput(isSet, what) {
+    return h('input', { type: 'password', autocomplete: 'new-password', spellcheck: false,
+      placeholder: isSet ? what + ' is set. Leave empty to keep it.' : 'Not set' });
+  }
+  function sourceBadge2(src, updated) {
+    const txt = src === 'dashboard' ? 'Saved in dashboard' : 'From config file';
+    const b = h('span', { class: 'badge plain', text: txt });
+    if (updated && updated.updated_ts) b.title = 'Changed by ' + str(updated.updated_by) + ', ' + absTime(updated.updated_ts);
+    return b;
+  }
+  async function copyText(text, fallbackInput) {
+    try { await navigator.clipboard.writeText(text); toast('Copied.', 'ok'); } catch (e) {
+      if (fallbackInput) { fallbackInput.focus(); fallbackInput.select(); }
+      toast('Copy is blocked here; the token is selected, press Ctrl/Cmd+C.', 'warn', 7000);
+    }
+  }
+  // Shows a token once. Resolves when the person confirms they stored it.
+  function showTokenOnce(name, token, note) {
+    const out = h('input', { type: 'text', value: token, readOnly: true, class: 'mono', spellcheck: false });
+    const copy = h('button', { type: 'button', class: 'btn', text: 'Copy' });
+    copy.addEventListener('click', () => copyText(token, out));
+    return modal({
+      title: 'Token for ' + name, ok: 'I stored it', hideOk: false, cancel: 'Close',
+      body: [h('div', { class: 'callout callout-warn' }, icon('lock'), h('span', { text: note || 'Copy this token now. Only its hash is stored, so it cannot be shown again.' })),
+        field('Token', h('div', { class: 'row token-row' }, out, copy))],
+    });
+  }
+
+  VIEWS.settings = function (root, params, ctx) {
+    const TABS = [['ai', 'AI'], ['challenge', 'Challenge'], ['users', 'Users & tokens'], ['storage', 'Event storage'], ['security', 'Security']];
+    let tab = params.get('tab') || (S.me && S.me.setup_mode ? 'users' : 'ai');
+    if (!TABS.some((t) => t[0] === tab)) tab = 'ai';
+    const body = h('div', { class: 'settings-body' });
+    root.append(pageHead('Settings', segmented(TABS, tab, (v) => { tab = v; render(); }, 'Settings section')));
+    if (S.me && S.me.setup_mode) {
+      root.appendChild(h('div', { class: 'callout callout-warn setup-banner' }, icon('lock'),
+        h('span', null, h('strong', { text: 'First-run setup. ' }), 'Create an admin user under Users & tokens, then sign in with its token. The setup token stops working as soon as the first admin exists.')));
+    }
+    root.appendChild(body);
+    let data = null;
+    async function load() {
+      body.replaceChildren(stateBox('loading', 'Loading settings…'));
+      try { data = await api('/api/settings'); if (ctx.alive) render(); } catch (e) {
+        if (ctx.alive && e.status !== 401) body.replaceChildren(stateBox('error', e.message));
+      }
+    }
+    function render() {
+      if (!data) return;
+      const fn = { ai: aiCard, challenge: challengeCard, users: usersCard, storage: storageCard, security: securityCard }[tab];
+      body.replaceChildren(fn());
+    }
+
+    function aiCard() {
+      const a = data.ai, v = a.values, key = a.api_key;
+      const c = card('AI analysis (Gemini)', { actions: sourceBadge2(a.source, a.updated) });
+      const status = a.running
+        ? h('div', { class: 'callout callout-ok' }, icon('ai'), h('span', { text: 'Running: model ' + str(v.model) + '. Key from ' + str(key.source) + '.' }))
+        : h('div', { class: 'callout' + (v.enabled ? ' callout-warn' : '') }, icon('ai'), h('span', { text: 'Off: ' + str(a.off_reason || 'disabled') + '.' }));
+      const enabled = checkbox('Enable AI analysis', v.enabled, 'Verdicts are advisory: they never block or allow traffic.');
+      const keyIn = secretInput(key.set, 'An API key');
+      const clearKey = checkbox('Remove the saved API key', false);
+      const model = h('input', { type: 'text', value: str(v.model), spellcheck: false, autocomplete: 'off', placeholder: 'Model id from Google AI Studio' });
+      const baseUrl = h('input', { type: 'url', value: str(v.base_url), spellcheck: false });
+      const rpm = numInput(v.requests_per_minute, 1, 10000);
+      const perDay = numInput(v.max_calls_per_day, 0, 10000000);
+      const timeout = numInput(v.timeout_ms, 500, 60000, 100);
+      const sendBody = checkbox('Send redacted request bodies to the model', v.send_body, 'Off by default. Bodies can hold personal data even after redaction.');
+      const priceIn = numInput(v.price_per_mtok_in, 0, 1000, 0.01);
+      const priceOut = numInput(v.price_per_mtok_out, 0, 1000, 0.01);
+      const trig = h('div', { class: 'chips', role: 'group', 'aria-label': 'Analyze these events' });
+      const trigBoxes = {};
+      for (const t of a.triggers_available || []) {
+        const b = checkbox(t.replace('_', ' '), (v.triggers || []).indexOf(t) >= 0);
+        trigBoxes[t] = b.box;
+        trig.appendChild(b.el);
+      }
+      const save = h('button', { type: 'submit', class: 'btn btn-primary', text: 'Save' });
+      const test = h('button', { type: 'button', class: 'btn', text: 'Test connection' });
+      const reset = h('button', { type: 'button', class: 'btn', text: 'Reset to config file' });
+      const result = h('p', { class: 'hint', role: 'status' });
+      const form = h('form', { class: 'settings-form' },
+        status,
+        enabled.el,
+        h('div', { class: 'grid grid-2' },
+          field('API key', keyIn, key.set ? 'Stored encrypted. Get a key at aistudio.google.com.' : 'Get a key at aistudio.google.com. Stored encrypted; never shown again. Or set ' + str(key.env_var) + ' on the server.'),
+          field('Model', model, 'For example a Flash model; check AI Studio for current ids.')),
+        key.set && key.source && key.source.indexOf('dashboard') >= 0 ? clearKey.el : null,
+        h('div', { class: 'grid grid-3' }, field('Requests per minute', rpm), field('Calls per day (budget)', perDay), field('Timeout (ms)', timeout)),
+        field('Analyze these events', trig),
+        sendBody.el,
+        h('details', { class: 'advanced' }, h('summary', { text: 'Advanced' }),
+          h('div', { class: 'grid grid-3' }, field('API base URL', baseUrl), field('USD per 1M input tokens', priceIn, 'For the cost estimate only.'), field('USD per 1M output tokens', priceOut))),
+        h('div', { class: 'row form-actions' }, save, test, a.source === 'dashboard' ? reset : null, result));
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        act(save, async () => {
+          const triggers = Object.keys(trigBoxes).filter((t) => trigBoxes[t].checked);
+          const payload = { enabled: enabled.box.checked, model: model.value.trim(), base_url: baseUrl.value.trim(),
+            timeout_ms: Number(timeout.value), requests_per_minute: Number(rpm.value), max_calls_per_day: Number(perDay.value),
+            triggers, send_body: sendBody.box.checked, price_per_mtok_in: Number(priceIn.value), price_per_mtok_out: Number(priceOut.value) };
+          if (clearKey.box.checked) payload.api_key = '';
+          else if (keyIn.value.trim()) payload.api_key = keyIn.value.trim();
+          const r = await api('/api/settings/ai', { method: 'PUT', body: payload });
+          keyIn.value = '';
+          toast(r.warning ? 'Saved. ' + r.warning + '.' : r.running ? 'Saved. AI analysis is running.' : 'Saved. AI analysis is off.', r.warning ? 'warn' : 'ok', 6000);
+          await load();
+        });
+      });
+      test.addEventListener('click', () => act(test, async () => {
+        result.textContent = 'Testing…';
+        const r = await api('/api/settings/ai/test', { method: 'POST' });
+        result.textContent = r.ok ? 'Connected in ' + (r.latency_ms < 1 ? '<1 ms' : fmtMs(r.latency_ms)) + (r.model_version ? ' (' + str(r.model_version) + ')' : '') + '.' : 'Failed: ' + str(r.error);
+        result.className = 'hint ' + (r.ok ? 'ok-text' : 'err-text');
+      }));
+      reset.addEventListener('click', async () => {
+        const yes = await modal({ title: 'Reset AI settings?', ok: 'Reset', danger: true, body: h('p', { text: 'The values from the config file apply again. A saved API key stays saved until you remove it.' }) });
+        if (yes) act(reset, async () => { await api('/api/settings/ai', { method: 'DELETE' }); toast('AI settings reset to the config file.', 'ok'); await load(); });
+      });
+      c.body.appendChild(form);
+      return c.el;
+    }
+
+    function challengeCard() {
+      const ch = data.challenge;
+      const c = card('Challenge page (Cloudflare Turnstile)', { actions: h('span', { class: 'badge plain', text: 'Policy v' + str(ch.policy_version) }) });
+      const enabled = checkbox('Enable the challenge page', ch.enabled, 'Rules with action "challenge" need this. Turning it off fails if such rules exist.');
+      const site = h('input', { type: 'text', value: str(ch.site_key), spellcheck: false, autocomplete: 'off', placeholder: 'Site key from the Cloudflare dashboard' });
+      const secret = secretInput(ch.secret_key_set, 'A secret key');
+      const path = h('input', { type: 'text', value: str(ch.challenge_path), spellcheck: false });
+      const ttl = numInput(ch.cookie_ttl, 60, 2592000, 60);
+      const rotate = checkbox('Issue a new cookie signing key', false, 'Every visitor who passed the challenge must pass it again.');
+      const save = h('button', { type: 'submit', class: 'btn btn-primary', text: 'Save as new policy version' });
+      const form = h('form', { class: 'settings-form' },
+        enabled.el,
+        h('div', { class: 'grid grid-2' }, field('Site key', site), field('Secret key', secret, 'Stored encrypted with the policy. Never shown again.')),
+        h('div', { class: 'grid grid-2' }, field('Challenge path', path), field('Verified-visitor cookie lifetime (seconds)', ttl)),
+        ch.cookie_secret_set ? rotate.el : h('p', { class: 'hint', text: 'A cookie signing key is generated automatically.' }),
+        h('p', { class: 'hint', text: str(ch.note) }),
+        h('div', { class: 'row form-actions' }, save));
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        act(save, async () => {
+          const r = await api('/api/settings/challenge', { method: 'PUT', body: {
+            enabled: enabled.box.checked, site_key: site.value.trim(), secret_key: secret.value.trim() || undefined,
+            challenge_path: path.value.trim(), cookie_ttl: Number(ttl.value), rotate_cookie_secret: rotate.box.checked } });
+          secret.value = '';
+          changeResult(r, 'Challenge settings');
+          await load();
+        });
+      });
+      c.body.appendChild(form);
+      return c.el;
+    }
+
+    function usersCard() {
+      const wrap = h('div', { class: 'stack' });
+      const c = card('Users & tokens');
+      const list = h('div');
+      c.body.appendChild(list);
+      const name = h('input', { type: 'text', spellcheck: false, autocomplete: 'off', maxLength: 64, placeholder: 'e.g. alice' });
+      const role = select([['viewer', 'Viewer: read only'], ['analyst', 'Analyst: labels, alerts, AI'], ['operator', 'Operator: + IP blocks'], ['admin', 'Admin: everything']], S.me && S.me.setup_mode ? 'admin' : 'analyst');
+      const add = h('button', { type: 'submit', class: 'btn btn-primary', text: 'Create user' });
+      const form = h('form', { class: 'settings-form row-form' }, field('Name', name), field('Role', role), h('div', { class: 'form-actions' }, add));
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        act(add, async () => {
+          const r = await api('/api/users', { method: 'POST', body: { name: name.value.trim(), role: role.value } });
+          name.value = '';
+          await showTokenOnce(r.name, r.token, r.note);
+          if (S.me && S.me.setup_mode && r.role === 'admin') {
+            toast('Admin created. Sign in with its token; the setup token no longer works.', 'ok', 9000);
+            logout('Setup finished. Sign in with the new admin token.');
+            return;
+          }
+          await loadUsers();
+        });
+      });
+      const addCard = card('Add a user', { sub: 'The token is shown once; only its hash is stored.' });
+      addCard.body.appendChild(form);
+      async function loadUsers() {
+        list.replaceChildren(stateBox('loading', 'Loading users…'));
+        const r = await api('/api/users');
+        const users = Array.isArray(r.users) ? r.users : [];
+        if (!users.length) { list.replaceChildren(stateBox('empty', 'No users yet. Create the first admin below.')); return; }
+        list.replaceChildren(table([
+          { label: 'Name', render: (u) => h('span', null, h('strong', { text: str(u.name) }), u.name === r.me ? h('span', { class: 'faint', text: ' (you)' }) : null) },
+          { label: 'Role', render: (u) => {
+            if (!u.editable || u.name === r.me) return h('span', { class: 'badge plain', text: str(u.role) });
+            const s = select(['viewer', 'analyst', 'operator', 'admin'], u.role, { 'aria-label': 'Role of ' + str(u.name) });
+            s.addEventListener('change', () => act(s, async () => { await api('/api/users/' + enc(u.name), { method: 'PUT', body: { role: s.value } }); toast('Role changed.', 'ok'); await loadUsers(); }));
+            return s;
+          } },
+          { label: 'Source', render: (u) => h('span', { class: 'faint', text: u.source === 'config_file' ? 'config file' : 'dashboard' }) },
+          { label: 'Created', render: (u) => u.created_ts ? h('span', null, timeEl(u.created_ts), h('span', { class: 'faint', text: ' by ' + str(u.created_by) })) : '—' },
+          { label: '', cls: 'actions', render: (u) => {
+            if (!u.editable) return h('span', { class: 'faint', text: 'edit in config' });
+            const rot = h('button', { type: 'button', class: 'btn btn-sm', text: 'New token' });
+            rot.addEventListener('click', async () => {
+              const yes = await modal({ title: 'Issue a new token for ' + str(u.name) + '?', ok: 'Issue token', danger: true, body: h('p', { text: 'The current token stops working immediately.' }) });
+              if (yes) act(rot, async () => { const t = await api('/api/users/' + enc(u.name) + '/rotate', { method: 'POST' }); await showTokenOnce(t.name, t.token, t.note); await loadUsers(); });
+            });
+            const del = h('button', { type: 'button', class: 'btn btn-sm btn-danger', text: 'Revoke' });
+            del.disabled = u.name === r.me;
+            del.addEventListener('click', async () => {
+              const yes = await modal({ title: 'Revoke ' + str(u.name) + '?', ok: 'Revoke', danger: true, body: h('p', { text: 'The user can no longer sign in. Their past actions stay in the audit log.' }) });
+              if (yes) act(del, async () => { await api('/api/users/' + enc(u.name), { method: 'DELETE' }); toast('Access revoked.', 'ok'); await loadUsers(); });
+            });
+            return h('span', { class: 'row' }, rot, del);
+          } },
+        ], users, { caption: 'Users' }));
+      }
+      loadUsers().catch((e) => { if (e.status !== 401) list.replaceChildren(stateBox('error', e.message)); });
+      wrap.append(c.el, addCard.el);
+      return wrap;
+    }
+
+    function storageCard() {
+      const st = data.storage, v = st.values;
+      const c = card('Event storage', { actions: sourceBadge2(st.source, st.updated) });
+      const all = checkbox('Store every request', v.store_all_events, 'Cost 19–27% throughput in our benchmark. Statistics and alerts always count every request either way.');
+      const rate = numInput(Math.round(v.benign_sample_rate * 10000) / 100, 0, 100, 0.1);
+      const perClient = numInput(v.per_client_per_sec, 0, 100000);
+      const days = numInput(v.retention_days, 1, 3650);
+      const maxEv = numInput(v.max_events, 1000, 1000000000, 1000);
+      const body = numInput(v.body_excerpt_bytes, 0, 65536, 256);
+      const save = h('button', { type: 'submit', class: 'btn btn-primary', text: 'Save' });
+      const reset = h('button', { type: 'button', class: 'btn', text: 'Reset to config file' });
+      const form = h('form', { class: 'settings-form' },
+        all.el,
+        h('div', { class: 'grid grid-3' },
+          field('Ordinary requests stored (%)', rate, 'Requests with a rule match, an anomaly or a 5xx are always stored.'),
+          field('Stored events per client per second', perClient, '0 means no limit. Keeps floods from filling the store.'),
+          field('Body excerpt kept for rule matches (bytes)', body)),
+        h('div', { class: 'grid grid-3' }, field('Keep events for (days)', days), field('Keep at most (events)', maxEv)),
+        h('div', { class: 'row form-actions' }, save, st.source === 'dashboard' ? reset : null));
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        act(save, async () => {
+          await api('/api/settings/storage', { method: 'PUT', body: { store_all_events: all.box.checked, benign_sample_rate: Number(rate.value) / 100,
+            per_client_per_sec: Number(perClient.value), retention_days: Number(days.value), max_events: Number(maxEv.value), body_excerpt_bytes: Number(body.value) } });
+          toast('Storage settings saved and applied.', 'ok');
+          await load();
+        });
+      });
+      reset.addEventListener('click', () => act(reset, async () => { await api('/api/settings/storage', { method: 'DELETE' }); toast('Storage settings reset to the config file.', 'ok'); await load(); }));
+      c.body.appendChild(form);
+      return c.el;
+    }
+
+    function securityCard() {
+      const s = data.security;
+      const c = card('Security of stored settings');
+      c.body.appendChild(kv([
+        ['Encryption', str(s.encryption)],
+        ['Secret key from', str(s.secret_key_source)],
+        ['Encrypted', 'AI API key, Turnstile secret, cookie signing key, every stored policy version, pending changes'],
+        ['Hashed (SHA-256)', 'Admin tokens; a token is shown once when created or rotated'],
+        ['Never sent to the browser', 'Secret values; this page only shows whether one is set'],
+        ['First-run setup', s.setup_mode ? 'Active: create an admin to end it' : 'Finished'],
+      ]));
+      c.body.appendChild(h('p', { class: 'hint', text: 'Back up the secret key file separately from the database. Without it, saved secrets cannot be read and must be entered again.' }));
+      return c.el;
+    }
+
+    load();
+  };
+
   // ------------------------------------------------------------------ theme
   function effectiveTheme() {
     const t = document.documentElement.dataset.theme;
@@ -2112,9 +2390,11 @@
     $('user-role').textContent = str(S.me.role) || '?';
     $('user-chip').title = 'Signed in as ' + str(S.me.name) + ' (' + str(S.me.role) + ')';
     for (const a of document.querySelectorAll('#sidenav a[data-min-role]')) a.hidden = !can(a.dataset.minRole);
+    $('setup-chip').hidden = !S.me.setup_mode;
     streamStart();
     refreshAlertCount();
     refreshDetectionMode();
+    if (S.me.setup_mode && parseHash().name !== 'settings') { go('settings', new URLSearchParams('tab=users')); return; }
     route();
   }
   function logout(msg) {

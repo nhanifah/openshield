@@ -97,6 +97,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--token-file", default=str(Path(tempfile.gettempdir()) / "openshield-dashboard-tokens.json"))
     ap.add_argument("--rps", type=float, default=20)
+    ap.add_argument("--setup", action="store_true",
+                    help="first-run mode: no admin users, real Gemini endpoint, AI off until set in Settings; "
+                         "data kept in --data-dir")
+    ap.add_argument("--data-dir", default=str(ROOT / ".openshield-local"))
     args = ap.parse_args()
     tokens = {k: "dev-" + secrets.token_hex(16) for k in ("alice", "bob", "ana", "val")}
     tf = Path(args.token_file)
@@ -109,13 +113,26 @@ def main():
         subprocess.Popen([str(BIN / "echo-upstream"), "127.0.0.1:13000"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL),
         subprocess.Popen([str(BIN / "mock-gemini"), "127.0.0.1:13900"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL),
     ]
-    (logdir / "intel.yaml").write_text(CFG.read_text().replace("__LOGDIR__", str(logdir)))
+    if args.setup:
+        data = Path(args.data_dir)
+        data.mkdir(parents=True, exist_ok=True)
+        os.chmod(data, 0o700)
+        cfg_text = (ROOT / "tests" / "dashboard" / "configs" / "local.yaml").read_text().replace("__DATA__", str(data))
+        logdir = data
+    else:
+        cfg_text = CFG.read_text().replace("__LOGDIR__", str(logdir))
+    (logdir / "intel.yaml").write_text(cfg_text)
     procs.append(subprocess.Popen([str(BIN / "openshield"), "-c", str(logdir / "intel.yaml")], env=env,
                                   stdout=open(logdir / "proxy.log", "wb"), stderr=subprocess.STDOUT))
     if not (wait_port(18090) and wait_port(19190)):
         print("proxy failed to start; see", logdir / "proxy.log", flush=True)
         sys.exit(1)
-    print(f"Dashboard: http://127.0.0.1:19190/  tokens: {tf}  logs: {logdir}", flush=True)
+    if args.setup:
+        setup = Path(args.data_dir) / "openshield-setup-token"
+        hint = f"first-run setup token in {setup}" if setup.exists() else "setup finished; sign in with your admin token"
+        print(f"Dashboard: http://127.0.0.1:19190/  ({hint})  data: {args.data_dir}", flush=True)
+    else:
+        print(f"Dashboard: http://127.0.0.1:19190/  tokens: {tf}  logs: {logdir}", flush=True)
     stop = threading.Event()
     th = threading.Thread(target=traffic, args=(args.rps, stop), daemon=True)
     th.start()

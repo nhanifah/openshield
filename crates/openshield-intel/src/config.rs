@@ -163,7 +163,7 @@ pub enum AiProviderKind {
 }
 
 /// Which events are eligible for AI analysis.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AiTrigger {
     /// A rule blocked the request.
@@ -350,9 +350,6 @@ impl AdminConfig {
         }
         if !intel.enabled {
             return Err("admin.enabled requires intel.enabled".into());
-        }
-        if self.users.is_empty() {
-            return Err("admin.users must list at least one user".into());
         }
         let mut names = std::collections::HashSet::new();
         for u in &self.users {

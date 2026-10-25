@@ -3,17 +3,16 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::mpsc;
 
 use crate::admin::{self, App, auth::Authenticator};
-use crate::ai::gemini::GeminiClient;
 use crate::ai::sanitize::Sanitizer;
-use crate::ai::supervisor::{Provider, Supervisor};
 use crate::config::{AdminConfig, IntelConfig};
 use crate::controls::{Controls, parse_target};
 use crate::hub::{EventHub, STREAM_MAX};
 use crate::policy::PolicyManager;
+use crate::settings::Settings;
 use crate::store::{Store, now_ms};
+use crate::vault::Vault;
 
 /// Everything the proxy needs from the intelligence layer.
 pub struct Intel {
@@ -41,6 +40,11 @@ impl Intel {
 
         let store = Arc::new(Store::open(&cfg.store.path)?);
         log::info!("Intel store: {:?} ({} events)", cfg.store.path, store.event_count().unwrap_or(0));
+        // Secrets and stored policies are encrypted with this key.
+        let vault = Arc::new(Vault::load(&Vault::default_key_file(&cfg.store.path))?);
+        log::info!("Secret key: {}", vault.source);
+        store.set_vault(Arc::clone(&vault))?;
+        let settings = Arc::new(Settings::load(Arc::clone(&store), cfg.clone())?);
 
         let controls = Arc::new(Controls::default());
         let now = now_ms();
@@ -82,24 +86,14 @@ impl Intel {
         let cfg2 = cfg.clone();
         let store2 = Arc::clone(&store);
         let controls2 = Arc::clone(&controls);
+        let settings2 = Arc::clone(&settings);
         let hub = runtime.block_on(async move {
-            let (ai, outcomes) = if cfg2.ai.enabled {
-                let key = std::env::var(&cfg2.ai.api_key_env)
-                    .map_err(|_| format!("AI is enabled but {} is not set", cfg2.ai.api_key_env))?;
-                let client = GeminiClient::new(
-                    &cfg2.ai.base_url,
-                    &cfg2.ai.model,
-                    key,
-                    Duration::from_millis(cfg2.ai.timeout_ms),
-                )?;
-                let (tx, rx) = mpsc::unbounded_channel();
-                let provider: Arc<dyn Provider> = Arc::new(client);
-                log::info!("AI supervision: {} model {} at {}", "gemini", cfg2.ai.model, cfg2.ai.base_url);
-                (Some(Supervisor::start(cfg2.ai.clone(), provider, tx)), Some(rx))
-            } else {
-                (None, None)
-            };
-            Ok::<_, String>(EventHub::start(cfg2, store2, controls2, ai, outcomes, sanitizer))
+            let hub = EventHub::start(cfg2, store2, controls2, settings2, sanitizer);
+            // A missing key is not fatal: it can be entered in the dashboard.
+            if let Err(e) = hub.reconfigure_ai() {
+                log::warn!("AI analysis is off: {e}. Set the API key under Settings in the dashboard.");
+            }
+            Ok::<_, String>(hub)
         })?;
 
         {
@@ -114,7 +108,8 @@ impl Intel {
         }
 
         if admin_cfg.enabled {
-            let auth = Authenticator::new(&admin_cfg.users)?;
+            let setup_file = Vault::default_key_file(&cfg.store.path).with_file_name("openshield-setup-token");
+            let auth = Authenticator::with_store(&admin_cfg.users, Arc::clone(&store), setup_file)?;
             let dataset_dir = cfg
                 .store
                 .path
@@ -128,6 +123,7 @@ impl Intel {
                 auth,
                 cfg: admin_cfg.clone(),
                 dataset_dir,
+                vault_source: vault.source.clone(),
             });
             let listen = admin_cfg.listen.clone();
             // Bind now so a bad address fails startup instead of logging later.

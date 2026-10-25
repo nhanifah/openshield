@@ -1,0 +1,47 @@
+# Local playground for the dashboard: first-run setup (no admin users),
+# real Gemini endpoint, AI off until configured under Settings.
+# Data, the secret key file and the setup token live in __DATA__.
+listen: "127.0.0.1:18090"
+upstream: "http://127.0.0.1:13000"
+workers: 2
+pid_file: "__DATA__/openshield.pid"
+upgrade_sock: "__DATA__/openshield-upgrade.sock"
+trusted_proxies: ["127.0.0.1"]
+logging:
+  format: json
+  access_log: "__DATA__/access.log"
+  audit_log: "__DATA__/audit.log"
+metrics:
+  listen: "127.0.0.1:19092"
+max_request_body_buffer: 65536
+rulesets:
+  - name: main
+    kind: root
+    rules:
+      - id: block-admin
+        action: block
+        expression: 'http.request.uri.path.normalized == "/admin"'
+      - id: block-sqli-args
+        action: block
+        expression: "any(detect_sqli(url_decode_uni(http.request.uri.args.values[*])))"
+      - id: block-xss-args
+        action: block
+        expression: "any(detect_xss(url_decode_uni(http.request.uri.args.values[*])))"
+      - id: log-search
+        action: log
+        expression: 'http.request.uri.path == "/search"'
+intel:
+  enabled: true
+  store:
+    path: "__DATA__/intel.db"
+  anomaly:
+    rate_threshold: 30
+    scan_404_threshold: 10
+    block_burst_threshold: 5
+  ai:
+    enabled: false
+    api_key_env: GEMINI_API_KEY
+admin:
+  enabled: true
+  listen: "127.0.0.1:19190"
+  users: []

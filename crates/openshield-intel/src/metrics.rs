@@ -46,7 +46,7 @@ pub fn update(hub: &EventHub) {
     let (b, a) = hub.controls.counts();
     CONTROLS.with_label_values(&["ip_block"]).set(b as i64);
     CONTROLS.with_label_values(&["ip_allow"]).set(a as i64);
-    if let Some(ai) = &hub.ai {
+    if let Some(ai) = hub.ai() {
         let st = ai.status();
         for (k, v) in [
             ("queue", st.queue),

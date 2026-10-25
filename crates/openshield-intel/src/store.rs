@@ -25,6 +25,29 @@ fn e<E: std::fmt::Display>(err: E) -> String {
 pub struct Store {
     write: Mutex<Connection>,
     read: Mutex<Connection>,
+    /// Encrypts secrets and stored policies. Set once at startup.
+    vault: std::sync::OnceLock<std::sync::Arc<crate::vault::Vault>>,
+}
+
+/// A setting stored from the dashboard. Secret values are decrypted only
+/// when read through [`Store::setting`].
+#[derive(Debug, Clone, Serialize)]
+pub struct SettingMeta {
+    pub key: String,
+    pub secret: bool,
+    pub updated_ts: i64,
+    pub updated_by: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct DbUser {
+    pub name: String,
+    pub role: String,
+    #[serde(skip)]
+    pub token_sha256: String,
+    pub created_ts: i64,
+    pub created_by: String,
+    pub rotated_ts: Option<i64>,
 }
 
 const SCHEMA: &str = r#"
@@ -130,6 +153,23 @@ CREATE TABLE IF NOT EXISTS changes (
     status TEXT NOT NULL,
     decided_by TEXT,
     decided_ts INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    secret INTEGER NOT NULL,
+    updated_ts INTEGER NOT NULL,
+    updated_by TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS admin_users (
+    name TEXT PRIMARY KEY,
+    role TEXT NOT NULL,
+    token_sha256 TEXT NOT NULL,
+    created_ts INTEGER NOT NULL,
+    created_by TEXT NOT NULL,
+    rotated_ts INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS datasets (
@@ -286,7 +326,169 @@ impl Store {
         Ok(Self {
             write: Mutex::new(w),
             read: Mutex::new(r),
+            vault: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Attach the vault. Policies and secret settings are encrypted from
+    /// then on; plaintext policies written before are re-encrypted.
+    pub fn set_vault(&self, vault: std::sync::Arc<crate::vault::Vault>) -> Result<()> {
+        let _ = self.vault.set(vault);
+        let c = self.write.lock();
+        let rows: Vec<(i64, String)> = {
+            let mut st = c.prepare("SELECT version, yaml FROM policy_versions").map_err(e)?;
+            st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+                .map_err(e)?
+                .collect::<std::result::Result<_, _>>()
+                .map_err(e)?
+        };
+        for (v, yaml) in rows {
+            if !crate::vault::Vault::is_encrypted(&yaml) {
+                let enc = self.seal(&format!("policy:{v}"), &yaml)?;
+                c.execute("UPDATE policy_versions SET yaml = ?1 WHERE version = ?2", params![enc, v])
+                    .map_err(e)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn seal(&self, name: &str, plain: &str) -> Result<String> {
+        match self.vault.get() {
+            Some(v) => v.encrypt(name, plain),
+            None => Ok(plain.to_string()),
+        }
+    }
+
+    fn open_value(&self, name: &str, stored: String) -> Result<String> {
+        if crate::vault::Vault::is_encrypted(&stored) {
+            self.vault.get().ok_or("encrypted value but no secret key loaded")?.decrypt(name, &stored)
+        } else {
+            Ok(stored)
+        }
+    }
+
+    // ---- settings -------------------------------------------------------
+
+    /// Store a setting; secret values are encrypted.
+    pub fn put_setting(&self, key: &str, value: &str, secret: bool, by: &str) -> Result<()> {
+        let stored = if secret {
+            if self.vault.get().is_none() {
+                return Err("refusing to store a secret without a secret key".into());
+            }
+            self.seal(&format!("setting:{key}"), value)?
+        } else {
+            value.to_string()
+        };
+        self.write
+            .lock()
+            .execute(
+                "INSERT OR REPLACE INTO settings (key, value, secret, updated_ts, updated_by) VALUES (?1,?2,?3,?4,?5)",
+                params![key, stored, secret as i64, now_ms(), by],
+            )
+            .map_err(e)?;
+        Ok(())
+    }
+
+    /// A setting's value (decrypted) and its metadata.
+    pub fn setting(&self, key: &str) -> Result<Option<(String, SettingMeta)>> {
+        let row: Option<(String, i64, i64, String)> = self
+            .read
+            .lock()
+            .query_row(
+                "SELECT value, secret, updated_ts, updated_by FROM settings WHERE key = ?1",
+                [key],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()
+            .map_err(e)?;
+        match row {
+            None => Ok(None),
+            Some((v, secret, ts, by)) => {
+                let value = self.open_value(&format!("setting:{key}"), v)?;
+                Ok(Some((
+                    value,
+                    SettingMeta {
+                        key: key.to_string(),
+                        secret: secret != 0,
+                        updated_ts: ts,
+                        updated_by: by,
+                    },
+                )))
+            }
+        }
+    }
+
+    pub fn delete_setting(&self, key: &str) -> Result<bool> {
+        let n = self
+            .write
+            .lock()
+            .execute("DELETE FROM settings WHERE key = ?1", [key])
+            .map_err(e)?;
+        Ok(n > 0)
+    }
+
+    // ---- admin users ----------------------------------------------------
+
+    pub fn users(&self) -> Result<Vec<DbUser>> {
+        let c = self.read.lock();
+        let mut st = c
+            .prepare("SELECT name, role, token_sha256, created_ts, created_by, rotated_ts FROM admin_users ORDER BY name")
+            .map_err(e)?;
+        let rows = st
+            .query_map([], |r| {
+                Ok(DbUser {
+                    name: r.get(0)?,
+                    role: r.get(1)?,
+                    token_sha256: r.get(2)?,
+                    created_ts: r.get(3)?,
+                    created_by: r.get(4)?,
+                    rotated_ts: r.get(5)?,
+                })
+            })
+            .map_err(e)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(e)
+    }
+
+    pub fn add_user(&self, name: &str, role: &str, token_sha256: &str, by: &str) -> Result<bool> {
+        let n = self
+            .write
+            .lock()
+            .execute(
+                "INSERT OR IGNORE INTO admin_users (name, role, token_sha256, created_ts, created_by) VALUES (?1,?2,?3,?4,?5)",
+                params![name, role, token_sha256, now_ms(), by],
+            )
+            .map_err(e)?;
+        Ok(n > 0)
+    }
+
+    pub fn set_user_token(&self, name: &str, token_sha256: &str) -> Result<bool> {
+        let n = self
+            .write
+            .lock()
+            .execute(
+                "UPDATE admin_users SET token_sha256 = ?1, rotated_ts = ?2 WHERE name = ?3",
+                params![token_sha256, now_ms(), name],
+            )
+            .map_err(e)?;
+        Ok(n > 0)
+    }
+
+    pub fn set_user_role(&self, name: &str, role: &str) -> Result<bool> {
+        let n = self
+            .write
+            .lock()
+            .execute("UPDATE admin_users SET role = ?1 WHERE name = ?2", params![role, name])
+            .map_err(e)?;
+        Ok(n > 0)
+    }
+
+    pub fn delete_user(&self, name: &str) -> Result<bool> {
+        let n = self
+            .write
+            .lock()
+            .execute("DELETE FROM admin_users WHERE name = ?1", [name])
+            .map_err(e)?;
+        Ok(n > 0)
     }
 
     /// In-memory store for tests.
@@ -774,11 +976,15 @@ impl Store {
             .map_err(e)?;
         tx.execute(
             "INSERT INTO policy_versions (ts, actor, comment, source, status, yaml, file_hash, rule_count) \
-             VALUES (?1,?2,?3,?4,'active',?5,?6,?7)",
-            params![now_ms(), actor, comment, source, yaml, file_hash, rule_count as i64],
+             VALUES (?1,?2,?3,?4,'active','',?5,?6)",
+            params![now_ms(), actor, comment, source, file_hash, rule_count as i64],
         )
         .map_err(e)?;
         let v = tx.last_insert_rowid();
+        // Encrypted under its version number (the policy can hold secrets).
+        let sealed = self.seal(&format!("policy:{v}"), yaml)?;
+        tx.execute("UPDATE policy_versions SET yaml = ?1 WHERE version = ?2", params![sealed, v])
+            .map_err(e)?;
         tx.commit().map_err(e)?;
         Ok(v)
     }
@@ -809,6 +1015,19 @@ impl Store {
     }
 
     pub fn policy_version(&self, version: i64) -> Result<Option<PolicyVersion>> {
+        let row = self.policy_version_raw(version)?;
+        match row {
+            Some(mut p) => {
+                if let Some(y) = p.yaml.take() {
+                    p.yaml = Some(self.open_value(&format!("policy:{}", p.version), y)?);
+                }
+                Ok(Some(p))
+            }
+            None => Ok(None),
+        }
+    }
+
+    fn policy_version_raw(&self, version: i64) -> Result<Option<PolicyVersion>> {
         let c = self.read.lock();
         c.query_row(
             "SELECT version, ts, actor, comment, source, status, yaml, file_hash, rule_count FROM policy_versions WHERE version = ?1",
@@ -854,7 +1073,7 @@ impl Store {
         let c = self.write.lock();
         c.execute(
             "INSERT INTO changes (ts, kind, summary, payload, requested_by, status) VALUES (?1,?2,?3,?4,?5,'pending')",
-            params![now_ms(), kind, summary, payload.to_string(), requested_by],
+            params![now_ms(), kind, summary, self.seal("change", &payload.to_string())?, requested_by],
         )
         .map_err(e)?;
         Ok(c.last_insert_rowid())
@@ -870,11 +1089,22 @@ impl Store {
     }
 
     pub fn get_change(&self, id: i64) -> Result<Option<Change>> {
-        self.read
+        let row: Option<(Change, String)> = self
+            .read
             .lock()
-            .query_row(&format!("{CHANGE_COLS} WHERE id = ?1"), [id], change_row)
+            .query_row(&format!("{CHANGE_COLS} WHERE id = ?1"), [id], |r| {
+                Ok((change_row(r)?, r.get::<_, String>(4)?))
+            })
             .optional()
-            .map_err(e)
+            .map_err(e)?;
+        match row {
+            Some((mut ch, raw)) => {
+                // Payloads can hold a whole policy with secrets: encrypted.
+                ch.payload = serde_json::from_str(&self.open_value("change", raw)?).unwrap_or(Value::Null);
+                Ok(Some(ch))
+            }
+            None => Ok(None),
+        }
     }
 
     /// Move a pending change to `status`. Returns false if it was not
@@ -1107,6 +1337,45 @@ mod tests {
         let id = s.add_change("policy_apply", "x", &serde_json::json!({}), "alice").unwrap();
         assert!(s.decide_change(id, "approved", "bob").unwrap());
         assert!(!s.decide_change(id, "approved", "bob").unwrap());
+    }
+
+    #[test]
+    fn secrets_and_policies_are_encrypted_at_rest() {
+        let s = Store::memory();
+        // Without a vault, secrets are refused.
+        assert!(s.put_setting("ai.api_key", "AIzaPLAINTEXT", true, "alice").is_err());
+        s.add_policy_version("file", "", "file", "cookie_secret: OLDPLAIN", "h", 1).unwrap();
+        let vault = std::sync::Arc::new(crate::vault::Vault::from_bytes(&[9u8; 32], "t").unwrap());
+        s.set_vault(vault).unwrap();
+        s.put_setting("ai.api_key", "AIzaPLAINTEXT", true, "alice").unwrap();
+        s.put_setting("storage", "{\"x\":1}", false, "alice").unwrap();
+        s.add_policy_version("alice", "", "api", "cookie_secret: NEWPLAIN", "h", 1).unwrap();
+        let (v, meta) = s.setting("ai.api_key").unwrap().unwrap();
+        assert_eq!(v, "AIzaPLAINTEXT");
+        assert!(meta.secret);
+        assert_eq!(s.active_policy().unwrap().unwrap().yaml.as_deref(), Some("cookie_secret: NEWPLAIN"));
+        assert_eq!(s.policy_version(1).unwrap().unwrap().yaml.as_deref(), Some("cookie_secret: OLDPLAIN"));
+        // Raw table contents hold no plaintext.
+        let c = s.read.lock();
+        let raw: String = c
+            .query_row("SELECT group_concat(value) FROM settings WHERE secret = 1", [], |r| r.get(0))
+            .unwrap();
+        assert!(!raw.contains("AIzaPLAINTEXT"));
+        let yamls: String = c.query_row("SELECT group_concat(yaml) FROM policy_versions", [], |r| r.get(0)).unwrap();
+        assert!(!yamls.contains("PLAIN"), "{yamls}");
+    }
+
+    #[test]
+    fn users_crud() {
+        let s = Store::memory();
+        assert!(s.add_user("bob", "analyst", "h1", "alice").unwrap());
+        assert!(!s.add_user("bob", "admin", "h2", "alice").unwrap(), "no overwrite");
+        assert!(s.set_user_role("bob", "operator").unwrap());
+        assert!(s.set_user_token("bob", "h3").unwrap());
+        let u = &s.users().unwrap()[0];
+        assert_eq!((u.role.as_str(), u.token_sha256.as_str()), ("operator", "h3"));
+        assert!(s.delete_user("bob").unwrap());
+        assert!(s.users().unwrap().is_empty());
     }
 
     #[test]

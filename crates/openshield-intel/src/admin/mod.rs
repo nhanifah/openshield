@@ -10,6 +10,7 @@
 
 pub mod assets;
 pub mod auth;
+mod settings_api;
 
 use std::convert::Infallible;
 use std::net::{IpAddr, SocketAddr};
@@ -42,6 +43,8 @@ pub struct App {
     pub auth: Authenticator,
     pub cfg: AdminConfig,
     pub dataset_dir: std::path::PathBuf,
+    /// Where the secret-encryption key came from (shown on the settings page).
+    pub vault_source: String,
 }
 
 type S = State<Arc<App>>;
@@ -191,6 +194,14 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/ai/status", get(ai_status))
         .route("/api/ai/analyze/{id}", post(ai_analyze))
         .route("/api/audit", get(audit_log))
+        .route("/api/settings", get(settings_api::get_settings))
+        .route("/api/settings/ai", axum::routing::put(settings_api::put_ai).delete(settings_api::reset_ai))
+        .route("/api/settings/ai/test", post(settings_api::test_ai))
+        .route("/api/settings/storage", axum::routing::put(settings_api::put_storage).delete(settings_api::reset_storage))
+        .route("/api/settings/challenge", axum::routing::put(settings_api::put_challenge))
+        .route("/api/users", get(settings_api::list_users).post(settings_api::create_user))
+        .route("/api/users/{name}", axum::routing::put(settings_api::set_role).delete(settings_api::delete_user))
+        .route("/api/users/{name}/rotate", post(settings_api::rotate_user))
         .fallback(|| async { ApiError::not_found() })
         .layer(DefaultBodyLimit::max(1024 * 1024))
         .layer(axum::middleware::map_response(security_headers))
@@ -243,8 +254,8 @@ async fn readyz(State(app): S) -> Response {
     (code, Json(json!({"ready": ready, "components": comps}))).into_response()
 }
 
-async fn me(c: Caller) -> Json<Value> {
-    Json(json!({"name": c.user.name, "role": c.user.role}))
+async fn me(State(app): S, c: Caller) -> Json<Value> {
+    Json(json!({"name": c.user.name, "role": c.user.role, "source": c.user.source, "setup_mode": app.auth.in_setup()}))
 }
 
 // ---- overview & events ------------------------------------------------------
@@ -269,7 +280,7 @@ async fn overview(State(app): S, _c: Caller, Query(q): Query<RangeQ>) -> ApiResu
     let now = now_ms();
     let ov = app.hub.stats.lock().overview(now, parse_range(q.range.as_deref()));
     let mut v = serde_json::to_value(&ov).map_err(ApiError::internal)?;
-    v["ai"] = match &app.hub.ai {
+    v["ai"] = match app.hub.ai() {
         Some(ai) => {
             let s = ai.status();
             json!({"state": s.state, "queue": s.queue, "analyzed": s.analyzed, "failures": s.failures,
@@ -513,7 +524,7 @@ markup, no links.";
 
 async fn alert_summarize(State(app): S, c: Caller, Path(id): Path<i64>) -> ApiResult {
     c.require(Role::Analyst)?;
-    let ai = app.hub.ai.as_ref().ok_or_else(|| ApiError::bad("AI analysis is disabled"))?;
+    let ai = app.hub.ai().ok_or_else(|| ApiError::bad("AI analysis is off"))?;
     let alert = app.hub.store.get_alert(id).map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
     let hub = Arc::clone(&app.hub);
     let subject = alert.subject.clone();
@@ -897,9 +908,9 @@ async fn dataset_download(State(app): S, c: Caller, Path((version, split)): Path
 // ---- AI & audit ------------------------------------------------------------------
 
 async fn ai_status(State(app): S, _c: Caller) -> ApiResult {
-    match &app.hub.ai {
+    match app.hub.ai() {
         Some(ai) => ok(serde_json::to_value(ai.status()).map_err(ApiError::internal)?),
-        None => ok(json!({"enabled": false, "state": "disabled"})),
+        None => ok(json!({"enabled": false, "state": "disabled", "reason": app.hub.ai_off_reason()})),
     }
 }
 

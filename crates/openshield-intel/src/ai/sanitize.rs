@@ -58,7 +58,8 @@ const INJECTION_MARKERS: &[&str] = &[
 pub struct Sanitizer {
     redactor: Redactor,
     ip_key: Option<Vec<u8>>,
-    send_body: bool,
+    /// Changeable at runtime from the settings page.
+    send_body: std::sync::atomic::AtomicBool,
 }
 
 impl Sanitizer {
@@ -67,8 +68,12 @@ impl Sanitizer {
         Self {
             redactor: Redactor::new(&RedactionConfig::default()),
             ip_key,
-            send_body,
+            send_body: std::sync::atomic::AtomicBool::new(send_body),
         }
+    }
+
+    pub fn set_send_body(&self, on: bool) {
+        self.send_body.store(on, std::sync::atomic::Ordering::Relaxed);
     }
 
     pub fn client_id(&self, ip: &str) -> String {
@@ -96,7 +101,7 @@ impl Sanitizer {
             .filter(|(k, _)| HEADER_ALLOW.contains(&k.as_str()))
             .map(|(k, v)| (k.clone(), truncate(&r.header(k, v), MAX_VALUE)))
             .collect();
-        let body_excerpt = if self.send_body {
+        let body_excerpt = if self.send_body.load(std::sync::atomic::Ordering::Relaxed) {
             ev.body_excerpt
                 .as_deref()
                 .map(|b| truncate(&r.body(Some(&ev.content_type), b), MAX_BODY))
