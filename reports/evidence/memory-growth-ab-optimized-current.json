@@ -1,0 +1,23 @@
+{
+  "tag": "ab-optimized-current",
+  "points": [
+    {
+      "unique_keys": 0,
+      "rss_mb": 24.890625
+    },
+    {
+      "unique_keys": 100000,
+      "rss_mb": 31.8125
+    },
+    {
+      "unique_keys": 200000,
+      "rss_mb": 32.859375
+    },
+    {
+      "unique_keys": 300000,
+      "rss_mb": 32.96875
+    }
+  ],
+  "growth_mb": 8.078125,
+  "bytes_per_key": 28.23509333333333
+}

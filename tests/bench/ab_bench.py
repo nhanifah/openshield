@@ -129,12 +129,18 @@ def main():
                         cfg += intel.replace("__LOGDIR__", str(rundir))
                     cfg_path = rundir / "c.yaml"
                     cfg_path.write_text(cfg)
-                    res, samples = run_proxy_scenario(binary, cfg_path, extra, args, rundir)
+                    free_gb = shutil.disk_usage(logdir).free / 1e9
+                    if free_gb < 3:
+                        raise SystemExit(f"stopping: only {free_gb:.1f} GB free on disk")
+                    try:
+                        res, samples = run_proxy_scenario(binary, cfg_path, extra, args, rundir)
+                    finally:
+                        if intel:
+                            # Intel runs write a SQLite store; never leave it behind.
+                            shutil.rmtree(rundir, ignore_errors=True)
                     runs.append({"round": r, "scenario": name, "variant": vname, **summarize(res, samples)})
                     m = runs[-1]
                     print(f"round {r} {name:28s} {vname:14s} rps={m['rps']:>8.0f} p50={m['p50_ms']:.2f} p95={m['p95_ms']:.2f} p99={m['p99_ms']:.2f} cpu={m['cpu_pct_avg'] or 0:.0f}% rss={m['rss_mb_max'] or 0:.0f}MB", flush=True)
-                    if intel:
-                        shutil.rmtree(rundir, ignore_errors=True)
     finally:
         up.send_signal(signal.SIGTERM)
         up.wait()

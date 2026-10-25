@@ -1,0 +1,23 @@
+{
+  "tag": "ab-optimized-current-rerun",
+  "points": [
+    {
+      "unique_keys": 0,
+      "rss_mb": 24.875
+    },
+    {
+      "unique_keys": 100000,
+      "rss_mb": 31.90625
+    },
+    {
+      "unique_keys": 200000,
+      "rss_mb": 32.703125
+    },
+    {
+      "unique_keys": 300000,
+      "rss_mb": 32.9375
+    }
+  ],
+  "growth_mb": 8.0625,
+  "bytes_per_key": 28.18048
+}

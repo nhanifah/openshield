@@ -1,42 +1,61 @@
 # Performance Comparison
 
-Baseline (commit `e646f5d`) against the current PR branch, measured **back to back in one session**. Raw data: [`evidence/bench-ab.json`](evidence/bench-ab.json), [`evidence/memory-growth-ab-baseline.json`](evidence/memory-growth-ab-baseline.json), [`evidence/memory-growth-ab-current.json`](evidence/memory-growth-ab-current.json).
+Baseline (commit `e646f5d`) against the current `main`, measured **back to back in one session**. Raw data: [`evidence/bench-ab-optimized.json`](evidence/bench-ab-optimized.json), [`evidence/memory-growth-ab-optimized-baseline.json`](evidence/memory-growth-ab-optimized-baseline.json), [`evidence/memory-growth-ab-optimized-current.json`](evidence/memory-growth-ab-optimized-current.json).
 
-## Why this run replaces the earlier comparison
+## Method
 
-The first "after" benchmark ran about an hour after the baseline and showed 22–27% lower proxy throughput. The direct-to-upstream control, which no change here touches, dropped about 26% in the same run, so most of that gap was the machine, not the code. This run removes that effect:
+Four variants run inside every round, one after the other, in an order that rotates each round, so they share the same machine state:
 
-- Baseline, current, and current-with-intel run inside every round, one after the other.
-- Their order rotates each round, so none of them always runs first or last.
-- The upstream alone is measured each round as a drift control.
-- Five rounds; each figure is the median of the five 10-second runs.
+1. **baseline**: commit `e646f5d`.
+2. **current**: `main`, with intel off.
+3. **current + intel**: `main` with the intelligence layer on, default settings.
+4. **current + intel, store all**: as 3, but `store_all_events: true` and `per_client_per_sec: 0`, so every request is written to SQLite.
 
-Command:
+The upstream alone is measured every round as a drift control. There are five rounds, and each figure is the median of five 10-second runs.
 
 ```bash
-python3 tests/bench/ab_bench.py --baseline-bin <openshield built from e646f5d> --rounds 5 --duration 10 --tag ab
+python3 tests/bench/ab_bench.py --baseline-bin <openshield built from e646f5d> --rounds 5 --duration 10 --with-store-all --tag ab-optimized
 ```
 
-Setup: Apple M4 (10 cores), macOS 26.5, `oha` with 64 connections, 4 proxy workers. Proxy, upstream and load generator share the machine, so these are relative figures, not capacity.
+Setup: Apple M4 (10 cores), macOS 26.5, `oha` with 64 connections, 4 proxy workers. Proxy, upstream and load generator share the machine, so compare variants within this run only.
 
-## Throughput and latency
+**Machine state moves a lot between sessions.** The upstream alone ran at a median of 191,337 req/s in this run but 142,826 in the earlier one. Absolute numbers from different runs are not comparable, which is why every comparison here is within one run.
 
-| Scenario | Baseline req/s | Current req/s | Current vs baseline | Current + intel req/s | Intel cost | p99 ms (base / cur / intel) | Max RSS MB (base / cur / intel) |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| Proxy, no rules | 38,810 | 39,374 | +1.5% | 27,094 | -31.2% | 6.41 / 5.83 / 9.28 | 38 / 32 / 194 |
-| Rules, benign GET | 32,493 | 32,280 | -0.7% | 23,353 | -27.7% | 6.76 / 6.61 / 9.95 | 39 / 33 / 163 |
-| Rules, SQLi GET (blocked) | 52,487 | 54,320 | +3.5% | 34,353 | -36.8% | 4.26 / 4.20 / 8.20 | 35 / 31 / 361 |
-| Rules, 0.6 KB form POST | 23,099 | 24,030 | +4.0% | 17,982 | -25.2% | 8.49 / 8.52 / 12.17 | 41 / 38 / 96 |
+## Results
 
-Drift control: upstream alone, median 142,826 req/s, range 118,491–149,090 across the five rounds.
+Requests per second (median). Percentages are against **baseline** for *current*, and against **current** for the two intel variants.
+
+| Scenario | Baseline | Current | Current + intel | Intel, store all | p99 ms (base / cur / intel / all) | Max RSS MB (base / cur / intel / all) |
+| --- | --- | --- | --- | --- | --- | --- |
+| Proxy, no rules | 55,087 | 65,322 (+18.6%) | 60,407 (-7.5%) | 52,883 (-19.0%) | 2.30 / 2.01 / 2.22 / 2.64 | 37 / 38 / 67 / 99 |
+| Rules, benign GET | 45,868 | 57,738 (+25.9%) | 52,323 (-9.4%) | 45,481 (-21.2%) | 2.69 / 2.29 / 2.56 / 2.97 | 36 / 38 / 68 / 101 |
+| Rules, SQLi GET (blocked) | 64,488 | 111,313 (+72.6%) | 91,616 (-17.7%) | 81,332 (-26.9%) | 2.02 / 1.30 / 1.71 / 1.83 | 32 / 36 / 85 / 129 |
+| Rules, 0.6 KB form POST | 31,789 | 34,412 (+8.2%) | 30,987 (-10.0%) | 27,618 (-19.7%) | 3.98 / 3.67 / 4.26 / 4.64 | 40 / 40 / 67 / 69 |
+
+Drift control: upstream alone, median 191,337 req/s, range 180,525–191,640.
 
 **Findings**
 
-1. **The security fixes cost no measurable throughput.** Current is between −0.7% and +4.0% of baseline. Per-round ranges overlap fully, for example benign GET 28,244–32,905 for baseline and 27,839–33,809 for current.
-2. **The intelligence layer costs 25–37% throughput and adds 3–4 ms at p99** in these scenarios. The likely causes, not yet profiled, are event building, redaction and the batched SQLite writes on the intel runtime, all competing with the proxy for the same CPU cores. Peak RSS rises to 96–361 MB; the in-memory recent-event ring (20,000 events) and simulation snapshots (2,000 requests) are the likely main holders.
-3. **What was not measured:** the intel layer with AI analysis on. Every AI call is asynchronous and bounded by the queue, so it should not add request latency, but that has not been benchmarked.
+1. **Current is faster than baseline: +8.2% to +72.6%.** The profile points to two fixes to bugs that were already in baseline: the access log lock, and a stderr warning Pingora wrote on every request. The gain is largest for blocked attacks, where baseline also logged an `info!` line for every block. Each fix's share of the gain was not measured separately.
+2. **The intelligence layer now costs 7.5–17.7% of throughput** against current with intel off; before the optimizations it cost 25–37%. With intel on, the proxy ranges from 2.5% slower (form POST) to 42.1% faster (blocked attacks) than baseline.
+3. **Storing every request costs 19.0–26.9%** against current. Use `store_all_events: true` only when full retention is needed.
+4. **Intel memory is now 67–85 MB peak with default settings**, against 96–361 MB before the optimizations.
+5. **Not measured:** intel with AI analysis on. AI calls are asynchronous and bounded by their queue, so they should not add request latency, but that has not been benchmarked.
 
-**Tuning if the intel cost matters:** lower `intel.events.recent_capacity` and `snapshot_capacity`, or set `intel.store.store_all_events: false` to store only notable events. Statistics still count every request. These settings have not been benchmarked yet.
+## What profiling found and what changed
+
+Profile taken with macOS `sample` (12 s) on a symbolized release build, with intel on, at 64 connections.
+
+| Cost found | Share | Change |
+| --- | --- | --- |
+| Access/audit log: one global lock held across a `write` syscall per request | ~12% of each worker's samples waiting on the lock | 64 KiB buffered writers flushed every 200 ms; formatting stays outside the lock |
+| Pingora wrote "Upstream body is already finished" to stderr on every bodyless request when request-body rules exist (the request-body filter sent an empty chunk after the body ended) | `env_logger` lock and writes per request | Filter leaves the body as `None` |
+| `getentropy` per request id | 461 samples | `uuid` with `fast-rng` |
+| SQLite writer saturated: half its time in WAL checkpoints and `fsync` | writer thread 98% busy | Less frequent checkpoints, plus storage defaults below |
+| Every event deep-copied into the in-memory ring; request data cloned on the proxy thread | `SecurityEvent::clone`, `String::clone` | Events shared as `Arc`; request data moved out of the finished transaction |
+| A single flooding client made every request "notable", and all were stored | writer queue holding up to 256,000 events | Per-client storage budget (50/s), 1% sample of ordinary traffic, and a 16-batch writer queue |
+
+Under the profiling load with intel on, throughput went from 17.5k to 26.5k req/s and RSS from 191 MB to 55 MB. That figure is from the profiling run; the table above is the controlled measurement.
 
 ## Memory under unique rate-limit keys
 
@@ -44,9 +63,20 @@ Drift control: upstream alone, median 142,826 req/s, range 118,491–149,090 acr
 
 | Unique keys | Baseline RSS MB | Current RSS MB |
 | --- | --- | --- |
-| 0 | 26.2 | 25.6 |
-| 100,000 | 39.7 | 33.2 |
-| 200,000 | 51.8 | 20.7 |
-| 300,000 | 70.0 | 20.7 |
+| 0 | 25.7 | 24.9 |
+| 100,000 | 38.1 | 31.8 |
+| 200,000 | 51.0 | 32.9 |
+| 300,000 | 72.8 | 33.0 |
 
-Baseline grows by about 44 MB and never frees it. Current stays flat because the mitigation table is capped and expired entries are swept.
+Baseline grows linearly (+47 MB) and never frees the memory. Current rises a few MB until the mitigation table reaches its 100,000-key cap, then stays flat.
+
+## Earlier run, before the optimizations (different session)
+
+From [`evidence/bench-ab.json`](evidence/bench-ab.json), kept for the record. It used the same method, but its absolute numbers are not comparable with the run above.
+
+| Scenario | Intel cost vs current | Intel max RSS |
+| --- | --- | --- |
+| Proxy, no rules | -31.2% | 194 MB |
+| Rules, benign GET | -27.7% | 163 MB |
+| Rules, SQLi GET (blocked) | -36.8% | 361 MB |
+| Rules, 0.6 KB form POST | -25.2% | 96 MB |
