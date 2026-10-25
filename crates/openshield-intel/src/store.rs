@@ -172,6 +172,21 @@ CREATE TABLE IF NOT EXISTS admin_users (
     rotated_ts INTEGER
 );
 
+-- Passkeys for dashboard sign-in. Public keys only: nothing here is secret.
+CREATE TABLE IF NOT EXISTS passkeys (
+    id TEXT PRIMARY KEY,
+    user_name TEXT NOT NULL,
+    label TEXT NOT NULL,
+    rp_id TEXT NOT NULL,
+    alg INTEGER NOT NULL,
+    public_key BLOB NOT NULL,
+    sign_count INTEGER NOT NULL,
+    transports TEXT NOT NULL,
+    created_ts INTEGER NOT NULL,
+    last_used_ts INTEGER
+);
+CREATE INDEX IF NOT EXISTS passkeys_user ON passkeys (user_name);
+
 CREATE TABLE IF NOT EXISTS datasets (
     version TEXT PRIMARY KEY,
     ts INTEGER NOT NULL,
@@ -489,6 +504,72 @@ impl Store {
             .execute("DELETE FROM admin_users WHERE name = ?1", [name])
             .map_err(e)?;
         Ok(n > 0)
+    }
+
+    // ---- passkeys ----------------------------------------------------------
+
+    pub fn add_passkey(&self, p: &Passkey) -> Result<bool> {
+        let n = self
+            .write
+            .lock()
+            .execute(
+                "INSERT OR IGNORE INTO passkeys (id, user_name, label, rp_id, alg, public_key, sign_count, transports, created_ts) \
+                 VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+                params![p.id, p.user, p.label, p.rp_id, p.alg, p.public_key, p.sign_count, p.transports, p.created_ts],
+            )
+            .map_err(e)?;
+        Ok(n > 0)
+    }
+
+    /// Passkeys of one user, or of everyone when `user` is `None`.
+    pub fn passkeys(&self, user: Option<&str>) -> Result<Vec<Passkey>> {
+        let c = self.read.lock();
+        let sql = "SELECT id, user_name, label, rp_id, alg, public_key, sign_count, transports, created_ts, last_used_ts \
+                   FROM passkeys WHERE (?1 IS NULL OR user_name = ?1) ORDER BY user_name, created_ts";
+        let mut st = c.prepare(sql).map_err(e)?;
+        let rows = st.query_map([user], passkey_row).map_err(e)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(e)
+    }
+
+    pub fn passkey(&self, id: &str) -> Result<Option<Passkey>> {
+        self.read
+            .lock()
+            .query_row(
+                "SELECT id, user_name, label, rp_id, alg, public_key, sign_count, transports, created_ts, last_used_ts \
+                 FROM passkeys WHERE id = ?1",
+                [id],
+                passkey_row,
+            )
+            .optional()
+            .map_err(e)
+    }
+
+    /// Record a sign-in: new counter and time.
+    pub fn touch_passkey(&self, id: &str, sign_count: u32) -> Result<()> {
+        self.write
+            .lock()
+            .execute(
+                "UPDATE passkeys SET sign_count = ?1, last_used_ts = ?2 WHERE id = ?3",
+                params![sign_count, now_ms(), id],
+            )
+            .map_err(e)?;
+        Ok(())
+    }
+
+    pub fn delete_passkey(&self, id: &str) -> Result<bool> {
+        let n = self
+            .write
+            .lock()
+            .execute("DELETE FROM passkeys WHERE id = ?1", [id])
+            .map_err(e)?;
+        Ok(n > 0)
+    }
+
+    pub fn delete_user_passkeys(&self, user: &str) -> Result<usize> {
+        self.write
+            .lock()
+            .execute("DELETE FROM passkeys WHERE user_name = ?1", [user])
+            .map_err(e)
     }
 
     /// In-memory store for tests.
@@ -1391,4 +1472,36 @@ mod tests {
             1
         );
     }
+}
+
+/// A registered passkey. `public_key` is never sent to the browser.
+#[derive(Debug, Clone, Serialize)]
+pub struct Passkey {
+    pub id: String,
+    pub user: String,
+    pub label: String,
+    pub rp_id: String,
+    pub alg: i64,
+    #[serde(skip)]
+    pub public_key: Vec<u8>,
+    #[serde(skip)]
+    pub sign_count: u32,
+    pub transports: String,
+    pub created_ts: i64,
+    pub last_used_ts: Option<i64>,
+}
+
+fn passkey_row(r: &rusqlite::Row<'_>) -> rusqlite::Result<Passkey> {
+    Ok(Passkey {
+        id: r.get(0)?,
+        user: r.get(1)?,
+        label: r.get(2)?,
+        rp_id: r.get(3)?,
+        alg: r.get(4)?,
+        public_key: r.get(5)?,
+        sign_count: r.get(6)?,
+        transports: r.get(7)?,
+        created_ts: r.get(8)?,
+        last_used_ts: r.get(9)?,
+    })
 }

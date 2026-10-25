@@ -10,6 +10,7 @@
 
 pub mod assets;
 pub mod auth;
+mod passkey_api;
 mod settings_api;
 
 use std::convert::Infallible;
@@ -45,6 +46,8 @@ pub struct App {
     pub dataset_dir: std::path::PathBuf,
     /// Where the secret-encryption key came from (shown on the settings page).
     pub vault_source: String,
+    /// Passkey ceremonies in progress.
+    pub passkeys: passkey_api::PasskeyState,
 }
 
 type S = State<Arc<App>>;
@@ -202,6 +205,13 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/users", get(settings_api::list_users).post(settings_api::create_user))
         .route("/api/users/{name}", axum::routing::put(settings_api::set_role).delete(settings_api::delete_user))
         .route("/api/users/{name}/rotate", post(settings_api::rotate_user))
+        .route("/api/passkeys", get(passkey_api::list).post(passkey_api::register))
+        .route("/api/passkeys/options", post(passkey_api::register_options))
+        .route("/api/passkeys/{id}", delete(passkey_api::remove))
+        .route("/api/settings/passkeys", axum::routing::put(passkey_api::put_settings).delete(passkey_api::reset_settings))
+        .route("/api/auth/passkey/options", post(passkey_api::signin_options))
+        .route("/api/auth/passkey", post(passkey_api::signin))
+        .route("/api/auth/logout", post(passkey_api::logout))
         .fallback(|| async { ApiError::not_found() })
         .layer(DefaultBodyLimit::max(1024 * 1024))
         .layer(axum::middleware::map_response(security_headers))

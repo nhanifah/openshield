@@ -20,7 +20,7 @@
     const t = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 30);
     return parts.join(' > ') + (t ? ' "' + t + '"' : '');
   };
-  const all = [...document.querySelectorAll('#app *, dialog[open] *')].filter(vis);
+  const all = [...document.querySelectorAll('#app *, #login *, dialog[open] *')].filter(vis);
   const out = { view: location.hash, theme: document.documentElement.dataset.theme || 'system', width: innerWidth };
 
   // 1. Struck-through text reads as broken or disabled.

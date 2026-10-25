@@ -13,6 +13,8 @@ Usage: python3 tests/e2e/run_intel_e2e.py --tag after
 """
 
 import argparse
+import base64
+import hashlib
 import json
 import os
 import secrets
@@ -486,6 +488,181 @@ def t_settings_challenge(ctx):
     still_works = as_client("203.0.113.150", "GET", "/protected/x").status == 403
     ok = st == 200 and r.get("status") == "applied" and masked and not in_db and ch["secret_key_set"] and ch["site_key"] == "site-xyz" and still_works
     return ok, f"save={st}/{r.get('status')} policy_masked={masked} plaintext_in_db={in_db} site_key={ch.get('site_key')} challenge_served={still_works}"
+
+
+# ---- passkeys: a software authenticator (Ed25519, RFC 8032 reference code) ----
+
+_P = 2**255 - 19
+_Q = 2**252 + 27742317777372353535851937790883648493
+_D = -121665 * pow(121666, _P - 2, _P) % _P
+_SQRT_M1 = pow(2, (_P - 1) // 4, _P)
+
+
+def _inv(x):
+    return pow(x, _P - 2, _P)
+
+
+def _add(P, Q):
+    A = (P[1] - P[0]) * (Q[1] - Q[0]) % _P
+    B = (P[1] + P[0]) * (Q[1] + Q[0]) % _P
+    C = 2 * P[3] * Q[3] * _D % _P
+    D = 2 * P[2] * Q[2] % _P
+    E, F, G, H = B - A, D - C, D + C, B + A
+    return (E * F % _P, G * H % _P, F * G % _P, E * H % _P)
+
+
+def _mul(s, P):
+    Q = (0, 1, 1, 0)
+    while s > 0:
+        if s & 1:
+            Q = _add(Q, P)
+        P = _add(P, P)
+        s >>= 1
+    return Q
+
+
+def _recover_x(y, sign):
+    x2 = (y * y - 1) * _inv(_D * y * y + 1) % _P
+    x = pow(x2, (_P + 3) // 8, _P)
+    if (x * x - x2) % _P:
+        x = x * _SQRT_M1 % _P
+    if (x & 1) != sign:
+        x = _P - x
+    return x
+
+
+_GY = 4 * _inv(5) % _P
+_GX = _recover_x(_GY, 0)
+_G = (_GX, _GY, 1, _GX * _GY % _P)
+
+
+def _compress(P):
+    zi = _inv(P[2])
+    x, y = P[0] * zi % _P, P[1] * zi % _P
+    return int.to_bytes(y | ((x & 1) << 255), 32, "little")
+
+
+def _expand(secret):
+    h = hashlib.sha512(secret).digest()
+    a = int.from_bytes(h[:32], "little")
+    a &= (1 << 254) - 8
+    a |= 1 << 254
+    return a, h[32:]
+
+
+def _hq(b):
+    return int.from_bytes(hashlib.sha512(b).digest(), "little") % _Q
+
+
+def ed25519_public(secret):
+    return _compress(_mul(_expand(secret)[0], _G))
+
+
+def ed25519_sign(secret, msg):
+    a, prefix = _expand(secret)
+    A = _compress(_mul(a, _G))
+    r = _hq(prefix + msg)
+    R = _compress(_mul(r, _G))
+    s = (r + _hq(R + A + msg) * a) % _Q
+    return R + int.to_bytes(s, 32, "little")
+
+
+def _cbor_head(major, n):
+    if n < 24:
+        return bytes([(major << 5) | n])
+    if n < 256:
+        return bytes([(major << 5) | 24, n])
+    return bytes([(major << 5) | 25]) + n.to_bytes(2, "big")
+
+
+def cbor(v):
+    if isinstance(v, bool):
+        return bytes([0xF5 if v else 0xF4])
+    if isinstance(v, int):
+        return _cbor_head(0, v) if v >= 0 else _cbor_head(1, -1 - v)
+    if isinstance(v, bytes):
+        return _cbor_head(2, len(v)) + v
+    if isinstance(v, str):
+        return _cbor_head(3, len(v.encode())) + v.encode()
+    if isinstance(v, dict):
+        return _cbor_head(5, len(v)) + b"".join(cbor(k) + cbor(x) for k, x in v.items())
+    raise TypeError(v)
+
+
+def b64u(b):
+    return base64.urlsafe_b64encode(b).rstrip(b"=").decode()
+
+
+class SoftPasskey:
+    """A software authenticator: what Touch ID or a security key would send."""
+
+    def __init__(self, rp_id="localhost"):
+        self.secret = secrets.token_bytes(32)
+        self.cred_id = secrets.token_bytes(16)
+        self.rp_id = rp_id
+        self.count = 0
+
+    def _auth_data(self, attested):
+        d = hashlib.sha256(self.rp_id.encode()).digest() + bytes([0x45 if attested else 0x05]) + self.count.to_bytes(4, "big")
+        if attested:
+            key = cbor({1: 1, 3: -8, -1: 6, -2: ed25519_public(self.secret)})
+            d += bytes(16) + len(self.cred_id).to_bytes(2, "big") + self.cred_id + key
+        return d
+
+    @staticmethod
+    def _client_data(ty, challenge, origin):
+        return json.dumps({"type": ty, "challenge": challenge, "origin": origin, "crossOrigin": False}).encode()
+
+    def register(self, challenge, origin):
+        cd = self._client_data("webauthn.create", challenge, origin)
+        att = cbor({"fmt": "none", "attStmt": {}, "authData": self._auth_data(True)})
+        return {"client_data_json": b64u(cd), "attestation_object": b64u(att), "transports": ["internal"], "label": "e2e key"}
+
+    def sign_in(self, challenge, origin):
+        cd = self._client_data("webauthn.get", challenge, origin)
+        ad = self._auth_data(False)
+        sig = ed25519_sign(self.secret, ad + hashlib.sha256(cd).digest())
+        return {"id": b64u(self.cred_id), "client_data_json": b64u(cd), "authenticator_data": b64u(ad), "signature": b64u(sig)}
+
+
+@test("I27", "Passkeys: register, sign in, replay and wrong origin refused, sign-out and removal end access", "high")
+def t_passkeys(ctx):
+    origin = "http://localhost:19190"
+    _, info, _ = api("GET", "/api/passkeys", "alice")
+    key = SoftPasskey()
+    _, opts, _ = api("POST", "/api/passkeys/options", "alice")
+    reg = key.register(opts["challenge"], origin)
+    reg_st, _, _ = api("POST", "/api/passkeys", "alice", reg)
+    replay_reg, _, _ = api("POST", "/api/passkeys", "alice", reg)
+
+    _, so, _ = api("POST", "/api/auth/passkey/options", None)
+    assertion = key.sign_in(so["challenge"], origin)
+    sign_st, sess, _ = api("POST", "/api/auth/passkey", None, assertion)
+    tok = sess.get("token", "") if isinstance(sess, dict) else ""
+    me = api("GET", "/api/me", tok)[1] if tok else {}
+    replay, _, _ = api("POST", "/api/auth/passkey", None, assertion)
+    _, so2, _ = api("POST", "/api/auth/passkey/options", None)
+    wrong_origin, wo, _ = api("POST", "/api/auth/passkey", None, key.sign_in(so2["challenge"], "http://evil.localhost:19190"))
+
+    out_st, _, _ = api("POST", "/api/auth/logout", tok)
+    after_logout = api("GET", "/api/me", tok)[0]
+    viewer_all, _, _ = api("GET", "/api/passkeys?all=true", "val")
+    viewer_del, _, _ = api("DELETE", "/api/passkeys/" + b64u(key.cred_id), "val")
+    ip_rp, _, _ = api("PUT", "/api/settings/passkeys", "alice", {"rp_id": "127.0.0.1", "origins": ["http://127.0.0.1:19190"]})
+    del_st, _, _ = api("DELETE", "/api/passkeys/" + b64u(key.cred_id), "alice")
+    _, so3, _ = api("POST", "/api/auth/passkey/options", None)
+    after_remove, _, _ = api("POST", "/api/auth/passkey", None, key.sign_in(so3["challenge"], origin))
+    _, aud, _ = api("GET", "/api/audit?limit=50", "alice")
+    audited = any(e.get("action") == "passkey_signin" and e.get("result") == "ok" for e in aud.get("entries", []))
+
+    ok = (info.get("rp_id") == "localhost" and reg_st == 200 and replay_reg == 400 and sign_st == 200 and tok.startswith("oss_")
+          and me.get("name") == "alice" and me.get("role") == "admin" and replay == 401 and wrong_origin == 401
+          and "origin" in str(wo) and out_st == 200 and after_logout == 401 and viewer_all == 403 and viewer_del == 403
+          and ip_rp == 400 and del_st == 200 and after_remove == 401 and audited)
+    return ok, (f"rp={info.get('rp_id')} register={reg_st} replay_register={replay_reg} sign_in={sign_st} session={tok[:4]} "
+                f"me={me.get('name')}/{me.get('role')} replay={replay} wrong_origin={wrong_origin} logout={out_st} "
+                f"after_logout={after_logout} viewer_all={viewer_all} viewer_delete={viewer_del} ip_domain={ip_rp} "
+                f"remove={del_st} after_remove={after_remove} audited={audited}")
 
 
 @test("I21", "Failed admin logins are rate limited", "medium")

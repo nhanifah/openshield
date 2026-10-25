@@ -23,5 +23,6 @@ pub mod settings;
 pub mod stats;
 pub mod store;
 pub mod vault;
+pub mod webauthn;
 
 pub use runtime::Intel;

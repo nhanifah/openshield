@@ -10,7 +10,11 @@ Every `/api/` request needs `Authorization: Bearer <token>`. Users come from thr
 - **Dashboard** (Settings, Users & tokens): an admin creates the user and receives a random `osk_…` token once. Only its SHA-256 digest is stored.
 - **First-run setup**: when no admin exists anywhere, the server writes a one-time token to `openshield-setup-token` (mode 0600) next to the database. Sign in with it and create an admin. The setup token stops working once that admin signs in, and the file is deleted.
 
-Ten failed attempts per minute from one address return `429`.
+**Passkeys.** Any user except the setup account can add passkeys (Touch ID, Windows Hello, a phone, a security key) from the account menu, the name at the top right of the dashboard. Signing in with one returns a session token (`oss_…`) used exactly like an admin token. It lasts 12 hours, ends at sign-out, and is kept in memory only, so a restart signs everyone out. Its role is read on every request, so a role change or a deleted user takes effect at once. Passkeys must verify the user (PIN or biometric). Only public keys are stored.
+
+Passkeys are bound to a host name, never an IP address. By default that is `localhost` with the dashboard's port, so open `http://localhost:<port>/` rather than `http://127.0.0.1:<port>/`. Behind a real domain, set the domain and the exact origins under Settings, Security. Changing the domain makes existing passkeys unusable.
+
+Ten failed attempts per minute from one address return `429`. Failed passkey sign-ins count toward the same limit.
 
 | Role | Can |
 | --- | --- |
@@ -220,7 +224,23 @@ Values saved here replace the config file's values for that section until reset,
 | PUT | `/api/users/{name}` | `{"role"}`; you cannot change your own role or demote the last admin |
 | DELETE | `/api/users/{name}` | Revoke; you cannot revoke yourself or the last admin |
 
-Config-file users cannot be changed through these endpoints.
+Config-file users cannot be changed through these endpoints. Revoking a user also removes their passkeys and ends their passkey sessions.
+
+### Passkeys
+
+| Method | Path | Auth | Notes |
+| --- | --- | --- | --- |
+| POST | `/api/auth/passkey/options` | none | Starts a sign-in: `{"challenge", "rpId", "origins", "userVerification", "timeout"}`. The challenge is single use and expires after 5 minutes |
+| POST | `/api/auth/passkey` | none | `{"id", "client_data_json", "authenticator_data", "signature"}` (base64url) → `{"token", "expires_in_s", "user", "role"}`. `401` with the reason on failure |
+| POST | `/api/auth/logout` | any | Ends the caller's passkey session |
+| GET | `/api/passkeys` | any | Your passkeys, the domain and the allowed origins. `?all=true` (admin) lists everyone's |
+| POST | `/api/passkeys/options` | any | Starts a registration: options for `navigator.credentials.create()` |
+| POST | `/api/passkeys` | any | `{"client_data_json", "attestation_object", "transports", "label"}` (base64url) |
+| DELETE | `/api/passkeys/{id}` | owner or admin | Removes a passkey; it can no longer sign in |
+| PUT | `/api/settings/passkeys` | admin | `{"rp_id", "origins"}`: a host name, and origins on it (https, or http for localhost) |
+| DELETE | `/api/settings/passkeys` | admin | Back to `localhost` and the dashboard's port |
+
+Accepted algorithms: ES256, EdDSA (Ed25519) and RS256. Attestation is not requested. A signature counter that does not increase on an authenticator that counts is refused as a possible cloned key.
 
 ### Encryption at rest
 

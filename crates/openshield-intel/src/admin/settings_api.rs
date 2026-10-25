@@ -348,6 +348,8 @@ pub async fn delete_user(State(app): S, c: Caller, Path(name): Path<String>) -> 
         return Err(ApiError::not_found());
     }
     app.auth.reload().map_err(ApiError::internal)?;
-    audit(&app, &c, "user_revoke", &name, json!({}), "ok");
+    let keys = app.hub.store.delete_user_passkeys(&name).map_err(ApiError::internal)?;
+    let sessions = app.auth.revoke_user_sessions(&name);
+    audit(&app, &c, "user_revoke", &name, json!({"passkeys_removed": keys, "sessions_ended": sessions}), "ok");
     ok(json!({"status": "revoked"}))
 }

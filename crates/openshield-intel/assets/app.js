@@ -2131,7 +2131,7 @@
     }
     function render() {
       if (!data) return;
-      const fn = { ai: aiCard, challenge: challengeCard, users: usersCard, storage: storageCard, security: securityCard }[tab];
+      const fn = { ai: aiCard, challenge: challengeCard, users: usersCard, storage: storageCard, security: () => h('div', { class: 'stack' }, securityCard(), passkeyCard()) }[tab];
       body.replaceChildren(fn());
     }
 
@@ -2254,7 +2254,7 @@
           await showTokenOnce(r.name, r.token, r.note);
           if (S.me && S.me.setup_mode && r.role === 'admin') {
             toast('Admin created. Sign in with its token; the setup token no longer works.', 'ok', 9000);
-            logout('Setup finished. Sign in with the new admin token.');
+            logout('Setup finished. Sign in with the new admin token.', true);
             return;
           }
           await loadUsers();
@@ -2341,9 +2341,45 @@
         ['Encrypted', 'AI API key, Turnstile secret, cookie signing key, every stored policy version, pending changes'],
         ['Hashed (SHA-256)', 'Admin tokens; a token is shown once when created or rotated'],
         ['Never sent to the browser', 'Secret values; this page only shows whether one is set'],
+        ['Passkeys', 'Only public keys are stored; a passkey sign-in lasts 12 hours and ends at sign-out'],
         ['First-run setup', s.setup_mode ? 'Active: create an admin to end it' : 'Finished'],
       ]));
-      c.body.appendChild(h('p', { class: 'hint', text: 'Back up the secret key file separately from the database. Without it, saved secrets cannot be read and must be entered again.' }));
+      c.body.appendChild(h('p', { class: 'hint spaced', text: 'Back up the secret key file separately from the database. Without it, saved secrets cannot be read and must be entered again.' }));
+      return c.el;
+    }
+
+    function passkeyCard() {
+      const c = card('Passkeys');
+      const rpId = h('input', { type: 'text', spellcheck: false, autocomplete: 'off', placeholder: 'console.example.com' });
+      const origins = h('textarea', { rows: 2, spellcheck: false, autocomplete: 'off', placeholder: 'https://console.example.com' });
+      const save = h('button', { type: 'submit', class: 'btn btn-primary', text: 'Save' });
+      const reset = h('button', { type: 'button', class: 'btn', text: 'Use default' });
+      const status = h('span', { class: 'badge plain' });
+      const list = h('div');
+      c.head.appendChild(status);
+      async function load() {
+        list.replaceChildren(stateBox('loading', 'Loading passkeys…'));
+        try {
+          const d = await api('/api/passkeys?all=true');
+          rpId.value = d.rp_id; origins.value = (d.origins || []).join('\n');
+          status.textContent = d.custom ? 'Custom' : 'Default';
+          list.replaceChildren(d.passkeys.length ? passkeyList(d.passkeys, true, load) : stateBox('empty', 'No passkeys registered. Each user adds their own from the account menu (their name, top right).'));
+        } catch (e) { if (e.status !== 401) list.replaceChildren(stateBox('error', e.message)); }
+      }
+      const form = h('form', { class: 'settings-form', 'aria-label': 'Passkey domain' },
+        field('Passkey domain', rpId, 'The host name passkeys are bound to. Not an IP address. Changing it makes existing passkeys unusable.'),
+        field('Allowed origins', origins, 'One per line: the exact addresses the dashboard is opened at. https, or http for localhost only.'),
+        h('div', { class: 'form-actions' }, save, reset));
+      form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const body = { rp_id: rpId.value.trim(), origins: origins.value.split('\n').map((x) => x.trim()).filter(Boolean) };
+        if (await act(save, () => api('/api/settings/passkeys', { method: 'PUT', body }))) { toast('Passkey domain saved.', 'ok'); load(); }
+      });
+      reset.addEventListener('click', async () => {
+        if (await act(reset, () => api('/api/settings/passkeys', { method: 'DELETE' }))) { toast('Passkey domain reset to the default.', 'ok'); load(); }
+      });
+      c.body.append(form, h('h3', { class: 'sub-head', text: 'Registered passkeys' }), list);
+      load();
       return c.el;
     }
 
@@ -2380,13 +2416,152 @@
   })();
   $('theme-toggle').addEventListener('click', () => setTheme(effectiveTheme() === 'dark' ? 'light' : 'dark'));
 
+  // ------------------------------------------------------------------ passkeys
+  const PK_OK = !!(window.PublicKeyCredential && navigator.credentials && navigator.credentials.create);
+  function b64uToBuf(v) {
+    let t = String(v).replace(/-/g, '+').replace(/_/g, '/');
+    while (t.length % 4) t += '=';
+    const bin = atob(t), u = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) u[i] = bin.charCodeAt(i);
+    return u.buffer;
+  }
+  function bufToB64u(b) {
+    let t = '';
+    for (const x of new Uint8Array(b)) t += String.fromCharCode(x);
+    return btoa(t).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function pkError(e, origins) {
+    const n = e && e.name;
+    if (n === 'NotAllowedError' || n === 'AbortError') return 'The passkey prompt was closed or timed out.';
+    if (n === 'InvalidStateError') return 'This device already holds a passkey for your account.';
+    if (n === 'SecurityError') return 'This address cannot use passkeys.' + (origins ? ' Open ' + origins.join(' or ') + ' instead.' : '');
+    return (e && e.message) || 'Passkey request failed.';
+  }
+  // Passkeys are bound to a host name, never an IP address.
+  function onIpAddress() { return /^[\d.]+$|^\[/.test(location.hostname); }
+  function localhostUrl() { return location.protocol + '//localhost' + (location.port ? ':' + location.port : '') + '/'; }
+
+  async function addPasskey(label) {
+    const o = await api('/api/passkeys/options', { method: 'POST' });
+    const cred = await navigator.credentials.create({ publicKey: {
+      challenge: b64uToBuf(o.challenge), rp: o.rp,
+      user: { id: b64uToBuf(o.user.id), name: o.user.name, displayName: o.user.displayName },
+      pubKeyCredParams: o.pubKeyCredParams,
+      excludeCredentials: (o.excludeCredentials || []).map((c) => ({ type: 'public-key', id: b64uToBuf(c.id), transports: c.transports })),
+      authenticatorSelection: o.authenticatorSelection, attestation: 'none', timeout: o.timeout,
+    } });
+    const r = cred.response;
+    return api('/api/passkeys', { method: 'POST', body: {
+      client_data_json: bufToB64u(r.clientDataJSON), attestation_object: bufToB64u(r.attestationObject),
+      transports: r.getTransports ? r.getTransports() : [], label,
+    } });
+  }
+
+  // Two clicks to remove: the first arms the button for a few seconds.
+  function removeButton(p, after) {
+    const b = h('button', { type: 'button', class: 'btn btn-sm', text: 'Remove', 'aria-label': 'Remove passkey ' + str(p.label) });
+    let armed = 0;
+    b.addEventListener('click', async () => {
+      if (!armed) {
+        b.textContent = 'Confirm remove'; b.classList.add('btn-danger');
+        armed = setTimeout(() => { armed = 0; b.textContent = 'Remove'; b.classList.remove('btn-danger'); }, 4000);
+        return;
+      }
+      clearTimeout(armed); armed = 0;
+      const r = await act(b, () => api('/api/passkeys/' + enc(p.id), { method: 'DELETE' }));
+      if (r) { toast('Passkey "' + str(p.label) + '" removed. It can no longer sign in.', 'ok'); after(); }
+    });
+    return b;
+  }
+  // A list, not a table: it stays readable at phone width with Remove in reach.
+  function passkeyList(list, withUser, after) {
+    return h('ul', { class: 'pk-list' }, list.map((p) => h('li', { class: 'pk-item' },
+      icon('key'),
+      h('div', { class: 'pk-main' },
+        h('div', { class: 'pk-name', text: str(p.label), title: str(p.label) }),
+        h('div', { class: 'pk-meta' }, withUser ? h('strong', { text: str(p.user) }) : null, withUser ? ' · ' : '',
+          'added ', timeEl(p.created_ts), ' · ', p.last_used_ts ? h('span', null, 'last used ', timeEl(p.last_used_ts)) : 'never used')),
+      removeButton(p, after))));
+  }
+
+  function accountDialog() {
+    const box = h('div', { class: 'stack' });
+    const list = h('div');
+    const label = h('input', { type: 'text', maxLength: 60, placeholder: 'e.g. MacBook Touch ID', 'aria-label': 'Passkey name' });
+    const addBtn = h('button', { type: 'button', class: 'btn btn-primary' }, icon('key'), 'Add a passkey');
+    const msg = h('p', { class: 'form-error', role: 'alert' });
+    let origins = null;
+    async function load() {
+      list.replaceChildren(stateBox('loading', 'Loading passkeys…'));
+      try {
+        const d = await api('/api/passkeys');
+        origins = d.origins || [];
+        const here = origins.indexOf(location.origin) >= 0;
+        addBtn.disabled = !PK_OK || !here || !d.can_register;
+        const notes = [];
+        if (!d.can_register) notes.push(h('div', { class: 'callout callout-warn' }, icon('lock'), h('span', { text: 'The setup account cannot hold passkeys. Create your own user, sign in with it, then add one.' })));
+        else if (!PK_OK) notes.push(h('div', { class: 'callout callout-warn' }, icon('lock'), h('span', { text: 'This browser does not support passkeys.' })));
+        else if (!here) notes.push(h('div', { class: 'callout callout-warn' }, icon('lock'), h('span', null, 'Passkeys work only at ', h('strong', { text: origins.join(', ') }), '. This page is open at ' + location.origin + '. Open that address to add or use one.')));
+        list.replaceChildren(...notes, d.passkeys.length ? passkeyList(d.passkeys, false, load)
+          : stateBox('empty', 'No passkeys yet. Add one to sign in with Touch ID, Windows Hello, your phone or a security key.'));
+      } catch (e) { if (e.status !== 401) list.replaceChildren(stateBox('error', e.message)); }
+    }
+    label.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addBtn.click(); } });
+    addBtn.addEventListener('click', async () => {
+      msg.textContent = '';
+      addBtn.disabled = true;
+      try {
+        const r = await addPasskey(label.value.trim());
+        label.value = '';
+        toast('Passkey "' + str(r.passkey && r.passkey.label) + '" added. Use it on the sign-in page.', 'ok');
+        await load();
+      } catch (e) { msg.textContent = pkError(e, origins); addBtn.disabled = false; }
+    });
+    box.append(h('p', { class: 'muted', text: 'A passkey signs you in with your device (fingerprint, face or PIN) instead of a pasted token. The token keeps working too.' }),
+      list, field('New passkey name', h('div', { class: 'row add-row' }, label, addBtn)), msg);
+    load();
+    modal({ title: 'Your passkeys · ' + str(S.me && S.me.name), body: box, hideOk: true, cancel: 'Close', wide: true });
+  }
+
+  async function passkeySignIn() {
+    const btn = $('login-passkey'), err = $('login-passkey-error');
+    err.textContent = '';
+    btn.disabled = true;
+    let origins = null;
+    try {
+      const r = await fetch('/api/auth/passkey/options', { method: 'POST', headers: { Accept: 'application/json' }, cache: 'no-store', credentials: 'omit' });
+      const o = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(r.status === 429 ? 'Too many failed attempts from this address. Wait a minute and try again.' : (o.error || 'Sign-in failed (HTTP ' + r.status + ').'));
+      origins = o.origins || [];
+      if (origins.indexOf(location.origin) < 0) throw new Error('Passkeys work only at ' + origins.join(' or ') + '. Open that address to sign in with one.');
+      const cred = await navigator.credentials.get({ publicKey: { challenge: b64uToBuf(o.challenge), rpId: o.rpId, userVerification: 'required', timeout: o.timeout } });
+      const resp = cred.response;
+      const r2 = await fetch('/api/auth/passkey', { method: 'POST', cache: 'no-store', credentials: 'omit',
+        headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+        body: JSON.stringify({ id: cred.id, client_data_json: bufToB64u(resp.clientDataJSON), authenticator_data: bufToB64u(resp.authenticatorData), signature: bufToB64u(resp.signature) }) });
+      const j = await r2.json().catch(() => ({}));
+      if (!r2.ok) throw new Error(r2.status === 429 ? 'Too many failed attempts from this address. Wait a minute and try again.' : (j.error || 'Sign-in failed.'));
+      const v = await validateToken(j.token);
+      if (v.error) throw new Error(v.error);
+      S.token = j.token; S.me = v.me;
+      store.set('sessionStorage', 'os-token', j.token);
+      enterApp();
+    } catch (e) { err.textContent = pkError(e, origins); } finally { btn.disabled = false; }
+  }
+
   // ------------------------------------------------------------------ auth / shell
-  function showLogin(msg) {
+  function showLogin(msg, info) {
     $('app').hidden = true;
     $('login').hidden = false;
     $('login-error').textContent = msg || '';
+    $('login-error').classList.toggle('form-info', !!info);
     $('login-submit').disabled = false;
     $('login-token').value = '';
+    $('login-passkey-block').hidden = !PK_OK;
+    $('login-passkey-error').textContent = '';
+    const ipNote = $('login-passkey-hint');
+    ipNote.hidden = !(PK_OK && onIpAddress());
+    if (!ipNote.hidden) ipNote.replaceChildren('Passkeys need a host name. To use one, open ', h('a', { href: localhostUrl(), text: localhostUrl() }), '.');
     document.title = 'Sign in · OpenShield';
     $('login-token').focus();
   }
@@ -2395,7 +2570,8 @@
     $('app').hidden = false;
     $('user-name').textContent = str(S.me.name) || 'unknown';
     $('user-role').textContent = str(S.me.role) || '?';
-    $('user-chip').title = 'Signed in as ' + str(S.me.name) + ' (' + str(S.me.role) + ')';
+    $('user-chip').title = 'Signed in as ' + str(S.me.name) + ' (' + str(S.me.role) + '). Manage your passkeys.';
+    $('user-chip').setAttribute('aria-label', 'Account ' + str(S.me.name) + ', ' + str(S.me.role) + ': manage passkeys');
     for (const a of document.querySelectorAll('#sidenav a[data-min-role]')) a.hidden = !can(a.dataset.minRole);
     $('setup-chip').hidden = !S.me.setup_mode;
     streamStart();
@@ -2404,7 +2580,7 @@
     if (S.me.setup_mode && parseHash().name !== 'settings') { go('settings', new URLSearchParams('tab=users')); return; }
     route();
   }
-  function logout(msg) {
+  function logout(msg, info) {
     const was = !!S.token;
     S.token = null; S.me = null;
     store.del('sessionStorage', 'os-token');
@@ -2415,7 +2591,7 @@
     $('view').replaceChildren();
     S.alertsOpen = 0; renderAlertCount();
     $('rps-val').textContent = '–';
-    if (was || msg) showLogin(msg);
+    if (was || msg) showLogin(msg, info);
   }
   async function validateToken(token) {
     let res;
@@ -2432,12 +2608,12 @@
   $('login-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const token = $('login-token').value.trim();
-    if (!token) { $('login-error').textContent = 'Enter your admin token.'; return; }
+    if (!token) { $('login-error').classList.remove('form-info'); $('login-error').textContent = 'Enter your admin token.'; return; }
     $('login-submit').disabled = true;
     $('login-error').textContent = '';
     const r = await validateToken(token);
     $('login-submit').disabled = false;
-    if (r.error) { $('login-error').textContent = r.error; $('login-token').select(); return; }
+    if (r.error) { $('login-error').classList.remove('form-info'); $('login-error').textContent = r.error; $('login-token').select(); return; }
     S.token = token; S.me = r.me;
     store.set('sessionStorage', 'os-token', token);
     $('login-token').value = '';
@@ -2450,7 +2626,15 @@
     $('login-reveal').setAttribute('aria-pressed', String(show));
     $('login-reveal').setAttribute('aria-label', show ? 'Hide token' : 'Show token');
   });
-  $('logout').addEventListener('click', () => logout('Signed out.'));
+  $('login-passkey').addEventListener('click', passkeySignIn);
+  $('user-chip').addEventListener('click', accountDialog);
+  $('logout').addEventListener('click', () => {
+    // A passkey session lives on the server; end it there too.
+    if (S.token && S.token.indexOf('oss_') === 0) {
+      fetch('/api/auth/logout', { method: 'POST', headers: { Authorization: 'Bearer ' + S.token }, keepalive: true, credentials: 'omit' }).catch(() => {});
+    }
+    logout('Signed out.', true);
+  });
   $('nav-toggle').addEventListener('click', () => setNav(!$('sidenav').classList.contains('open')));
   $('nav-scrim').addEventListener('click', () => setNav(false));
   window.addEventListener('hashchange', route);

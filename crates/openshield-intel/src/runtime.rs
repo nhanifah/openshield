@@ -124,6 +124,7 @@ impl Intel {
                 cfg: admin_cfg.clone(),
                 dataset_dir,
                 vault_source: vault.source.clone(),
+                passkeys: Default::default(),
             });
             let listen = admin_cfg.listen.clone();
             // Bind now so a bad address fails startup instead of logging later.

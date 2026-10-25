@@ -37,6 +37,7 @@
   <symbol id="i-lock" viewBox="0 0 24 24"><rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></symbol>
   <symbol id="i-user" viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/><path d="M4 21a8 8 0 0 1 16 0"/></symbol>
   <symbol id="i-bot" viewBox="0 0 24 24"><rect x="4" y="8" width="16" height="12" rx="2"/><path d="M12 8V4M9 13h.01M15 13h.01M9 17h6"/></symbol>
+  <symbol id="i-key" viewBox="0 0 24 24"><circle cx="7.5" cy="15.5" r="4.5"/><path d="M10.7 12.3 20 3M16 7l3 3M14 9l2 2"/></symbol>
   <symbol id="i-eye" viewBox="0 0 24 24"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></symbol>
 </svg>
 
@@ -59,6 +60,12 @@
     <p id="login-error" class="form-error" role="alert"></p>
     <button type="submit" id="login-submit" class="btn btn-primary btn-block">Sign in</button>
     <p id="login-help" class="hint">The token is sent as a bearer token and kept only in this tab's session storage. Closing the tab signs you out.</p>
+    <div id="login-passkey-block" class="login-alt" hidden>
+      <p class="login-or"><span>or</span></p>
+      <button type="button" id="login-passkey" class="btn btn-block"><svg class="ico" aria-hidden="true"><use href="#i-key"/></svg>Sign in with a passkey</button>
+      <p id="login-passkey-error" class="form-error" role="alert"></p>
+      <p id="login-passkey-hint" class="hint" hidden></p>
+    </div>
   </form>
 </main>
 
@@ -71,7 +78,7 @@
     <div class="topbar-spacer"></div>
     <div id="detect-banner" class="pill pill-warn" hidden>Monitoring only</div>
     <span id="setup-chip" class="badge setup-chip" hidden>Setup mode</span>
-    <div class="user" id="user-chip"><svg class="ico" aria-hidden="true"><use href="#i-user"/></svg><span id="user-name"></span><span id="user-role" class="role"></span></div>
+    <button type="button" class="user user-btn" id="user-chip" aria-haspopup="dialog"><svg class="ico" aria-hidden="true"><use href="#i-user"/></svg><span id="user-name"></span><span id="user-role" class="role"></span></button>
     <button type="button" id="theme-toggle" class="btn btn-icon" aria-label="Switch to light theme"><svg class="ico" aria-hidden="true"><use id="theme-icon" href="#i-sun"/></svg></button>
     <button type="button" id="logout" class="btn btn-icon" aria-label="Sign out"><svg class="ico" aria-hidden="true"><use href="#i-logout"/></svg></button>
   </header>

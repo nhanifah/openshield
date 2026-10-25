@@ -11,6 +11,11 @@
 //!   working until an admin created in the dashboard signs in for the first
 //!   time (so the new admin's token is never lost between creation and
 //!   use); then the file is deleted.
+//!
+//! Signing in with a passkey issues a session token (`oss_…`) that lives in
+//! memory only: it expires after `SESSION_TTL`, on sign-out, when its user
+//! is deleted, and on restart. Its role is looked up on every request, so a
+//! role change applies at once.
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -60,7 +65,18 @@ pub struct Authenticator {
     setup: RwLock<Option<(Account, PathBuf)>>,
     store: Option<Arc<Store>>,
     failures: Mutex<HashMap<IpAddr, (u32, Instant)>>,
+    sessions: Mutex<HashMap<[u8; 32], Session>>,
 }
+
+struct Session {
+    name: String,
+    expires: Instant,
+}
+
+/// How long a passkey sign-in lasts.
+pub const SESSION_TTL: Duration = Duration::from_secs(12 * 3600);
+/// Upper bound on live sessions (oldest are dropped first when full).
+const MAX_SESSIONS: usize = 10_000;
 
 /// Failed attempts per address per minute before `429`.
 pub const MAX_FAILURES_PER_MIN: u32 = 10;
@@ -122,6 +138,7 @@ impl Authenticator {
             setup: RwLock::new(None),
             store: None,
             failures: Mutex::new(HashMap::new()),
+            sessions: Mutex::new(HashMap::new()),
         })
     }
 
@@ -211,6 +228,93 @@ impl Authenticator {
         self.config_accounts.iter().map(|a| (a.name.clone(), a.role)).collect()
     }
 
+    /// Current role of a named account (config or dashboard), if it exists.
+    pub fn role_of(&self, name: &str) -> Option<(Role, UserSource)> {
+        if let Some(a) = self.config_accounts.iter().find(|a| a.name == name) {
+            return Some((a.role, a.source));
+        }
+        let db = self.db_accounts.read();
+        db.iter().find(|a| a.name == name).map(|a| (a.role, a.source))
+    }
+
+    /// Start a passkey session for `name`; returns its bearer token.
+    pub fn issue_session(&self, name: &str) -> String {
+        let mut b = [0u8; 32];
+        aws_lc_rs::rand::fill(&mut b).expect("system random generator");
+        let token = format!("oss_{}", hex::encode(b));
+        let mut s = self.sessions.lock();
+        s.retain(|_, v| v.expires > Instant::now());
+        if s.len() >= MAX_SESSIONS
+            && let Some(oldest) = s.iter().min_by_key(|(_, v)| v.expires).map(|(k, _)| *k)
+        {
+            s.remove(&oldest);
+        }
+        s.insert(
+            Sha256::digest(token.as_bytes()).into(),
+            Session {
+                name: name.to_string(),
+                expires: Instant::now() + SESSION_TTL,
+            },
+        );
+        token
+    }
+
+    /// End one session (sign-out). Returns false for non-session tokens.
+    pub fn revoke_session(&self, token: &str) -> bool {
+        let d: [u8; 32] = Sha256::digest(token.as_bytes()).into();
+        self.sessions.lock().remove(&d).is_some()
+    }
+
+    /// End every session of a user (user deleted).
+    pub fn revoke_user_sessions(&self, name: &str) -> usize {
+        let mut s = self.sessions.lock();
+        let before = s.len();
+        s.retain(|_, v| v.name != name);
+        before - s.len()
+    }
+
+    /// Count a failed sign-in from `ip` (passkey attempts share the token
+    /// lockout).
+    pub fn record_failure(&self, ip: IpAddr) {
+        let mut f = self.failures.lock();
+        if f.len() > 10_000 {
+            f.retain(|_, (_, since)| since.elapsed() < Duration::from_secs(60));
+        }
+        let e = f.entry(ip).or_insert((0, Instant::now()));
+        if e.1.elapsed() >= Duration::from_secs(60) {
+            *e = (0, Instant::now());
+        }
+        e.0 += 1;
+    }
+
+    fn check_session(&self, token: &str, ip: IpAddr) -> Option<User> {
+        let d: [u8; 32] = Sha256::digest(token.as_bytes()).into();
+        let name = {
+            let mut s = self.sessions.lock();
+            match s.get(&d) {
+                Some(v) if v.expires > Instant::now() => Some(v.name.clone()),
+                Some(_) => {
+                    s.remove(&d);
+                    None
+                }
+                None => None,
+            }
+        };
+        let found = name.and_then(|n| self.role_of(&n).map(|(role, source)| (n, role, source)));
+        match found {
+            Some((name, role, source)) => {
+                if role == Role::Admin && self.in_setup() {
+                    self.finish_setup();
+                }
+                Some(User { name, role, source })
+            }
+            None => {
+                self.record_failure(ip);
+                None
+            }
+        }
+    }
+
     /// True when `ip` has used up its failed attempts for this minute.
     pub fn locked_out(&self, ip: IpAddr) -> bool {
         let f = self.failures.lock();
@@ -220,6 +324,9 @@ impl Authenticator {
     /// Check a bearer token against every account, in constant time per
     /// account, so timing does not reveal which (if any) is close.
     pub fn check(&self, token: &str, ip: IpAddr) -> Option<User> {
+        if token.starts_with("oss_") {
+            return self.check_session(token, ip);
+        }
         let digest: [u8; 32] = Sha256::digest(token.as_bytes()).into();
         let mut found: Option<Account> = None;
         let db = self.db_accounts.read();
@@ -248,15 +355,7 @@ impl Authenticator {
                 })
             }
             None => {
-                let mut f = self.failures.lock();
-                if f.len() > 10_000 {
-                    f.retain(|_, (_, since)| since.elapsed() < Duration::from_secs(60));
-                }
-                let e = f.entry(ip).or_insert((0, Instant::now()));
-                if e.1.elapsed() >= Duration::from_secs(60) {
-                    *e = (0, Instant::now());
-                }
-                e.0 += 1;
+                self.record_failure(ip);
                 None
             }
         }
@@ -386,6 +485,23 @@ mod tests {
             .unwrap();
         assert!(!a.in_setup());
         assert!(!file.exists());
+    }
+
+    #[test]
+    fn passkey_sessions_follow_the_user() {
+        let a = auth();
+        let ip: IpAddr = "10.0.0.9".parse().unwrap();
+        let t = a.issue_session("alice");
+        assert!(t.starts_with("oss_") && t.len() == 68);
+        let u = a.check(&t, ip).unwrap();
+        assert_eq!((u.name.as_str(), u.role), ("alice", Role::Admin));
+        // Unknown users get no session; revoked sessions stop working.
+        assert!(a.check(&a.issue_session("nobody"), ip).is_none());
+        assert!(a.revoke_session(&t));
+        assert!(a.check(&t, ip).is_none());
+        let t2 = a.issue_session("alice");
+        assert_eq!(a.revoke_user_sessions("alice"), 1);
+        assert!(a.check(&t2, ip).is_none());
     }
 
     #[test]
