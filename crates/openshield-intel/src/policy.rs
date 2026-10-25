@@ -352,6 +352,7 @@ impl PolicyManager {
         let (_, cur) = compile(&current_yaml)?;
         let cur = Arc::new(cur);
         let cand = Arc::new(cand);
+        let redactor = openshield_core::redact::Redactor::new(&Default::default());
         let mut sim = Simulation {
             replayed: 0,
             changed: 0,
@@ -368,10 +369,11 @@ impl PolicyManager {
             if a != b {
                 sim.changed += 1;
                 if sim.diffs.len() < 200 {
+                    // Snapshots are unredacted; what leaves is redacted.
                     sim.diffs.push(SimDiff {
                         event_id: s.event_id.clone(),
                         method: s.request.method.clone(),
-                        path: s.request.path.clone(),
+                        path: redactor.text(&s.request.path).into_owned(),
                         current: a,
                         candidate: b,
                     });

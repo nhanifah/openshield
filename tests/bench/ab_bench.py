@@ -37,6 +37,16 @@ intel:
     path: "__LOGDIR__/intel.db"
 """
 
+# Intel with every request stored and no per-client budget.
+INTEL_ALL = """
+intel:
+  enabled: true
+  store:
+    path: "__LOGDIR__/intel.db"
+    store_all_events: true
+    per_client_per_sec: 0
+"""
+
 
 def run_proxy_scenario(binary, cfg_text, extra, args, logdir):
     proc = subprocess.Popen([binary, "-c", str(cfg_text)], stdout=subprocess.DEVNULL, stderr=open(logdir / "proxy.stderr", "ab"))
@@ -84,13 +94,16 @@ def main():
     ap.add_argument("--conns", type=int, default=64)
     ap.add_argument("--workers", type=int, default=4)
     ap.add_argument("--tag", default="ab")
+    ap.add_argument("--with-store-all", action="store_true", help="add a variant that stores every request")
     args = ap.parse_args()
 
     variants = [
-        ("baseline", args.baseline_bin, False),
-        ("current", str(BIN / "openshield"), False),
-        ("current_intel", str(BIN / "openshield"), True),
+        ("baseline", args.baseline_bin, None),
+        ("current", str(BIN / "openshield"), None),
+        ("current_intel", str(BIN / "openshield"), INTEL),
     ]
+    if args.with_store_all:
+        variants.append(("current_intel_store_all", str(BIN / "openshield"), INTEL_ALL))
     logdir = Path(tempfile.mkdtemp(prefix="openshield-ab-"))
     up = subprocess.Popen([str(BIN / "echo-upstream"), UPSTREAM], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     assert wait_port(UPSTREAM)
@@ -103,7 +116,8 @@ def main():
             res = run_oha(None, direct[3], args.duration, args.conns, "upstream")
             runs.append({"round": r, "scenario": direct[0], "variant": "upstream_direct", **summarize(res, [])})
             print(f"round {r} {direct[0]:28s} upstream_direct rps={runs[-1]['rps']:.0f}", flush=True)
-            order = variants[r % 3:] + variants[: r % 3]
+            k = r % len(variants)
+            order = variants[k:] + variants[:k]
             for name, target, rules, extra in SCENARIOS:
                 if target != "proxy":
                     continue
@@ -112,7 +126,7 @@ def main():
                     rundir.mkdir()
                     cfg = BASE.replace("__WORKERS__", str(args.workers)).replace("__LOGDIR__", str(rundir)) + rules
                     if intel:
-                        cfg += INTEL.replace("__LOGDIR__", str(rundir))
+                        cfg += intel.replace("__LOGDIR__", str(rundir))
                     cfg_path = rundir / "c.yaml"
                     cfg_path.write_text(cfg)
                     res, samples = run_proxy_scenario(binary, cfg_path, extra, args, rundir)

@@ -54,6 +54,8 @@ pub struct HubCounters {
     pub dropped: AtomicU64,
     pub stored: AtomicU64,
     pub store_dropped: AtomicU64,
+    /// Notable events not stored because their client used up its budget.
+    pub store_sampled_out: AtomicU64,
     pub store_errors: AtomicU64,
     pub alerts: AtomicU64,
     pub auto_blocks: AtomicU64,
@@ -65,6 +67,7 @@ pub struct HubStatus {
     pub dropped: u64,
     pub stored: u64,
     pub store_dropped: u64,
+    pub store_sampled_out: u64,
     pub store_errors: u64,
     pub alerts: u64,
     pub auto_blocks: u64,
@@ -74,7 +77,7 @@ pub struct HubStatus {
 }
 
 enum DbMsg {
-    Events(Vec<SecurityEvent>),
+    Events(Vec<Arc<SecurityEvent>>),
     Verdict(String, Box<AiVerdict>),
     Candidate { event_id: String, label: String, model: String },
 }
@@ -86,7 +89,9 @@ pub struct EventHub {
     pub controls: Arc<Controls>,
     pub stats: Arc<Mutex<Stats>>,
     detector: Arc<Mutex<Detector>>,
-    recent: Arc<RwLock<VecDeque<SecurityEvent>>>,
+    /// Shared, not copied: the ring, the write batch and the stream all
+    /// hold the same event.
+    recent: Arc<RwLock<VecDeque<Arc<SecurityEvent>>>>,
     snapshots: Arc<Mutex<VecDeque<Snapshot>>>,
     pub stream: broadcast::Sender<StreamMsg>,
     pub ai: Option<Arc<Supervisor>>,
@@ -107,7 +112,10 @@ impl EventHub {
     ) -> Arc<Self> {
         let (tx, rx) = mpsc::channel(cfg.events.queue_capacity);
         let (stream, _) = broadcast::channel(4096);
-        let (db_tx, db_rx) = std::sync::mpsc::sync_channel::<DbMsg>(256);
+        // At most 16 pending batches (16,000 events) wait for the writer;
+        // beyond that batches are dropped and counted, so memory stays bounded
+        // when storage cannot keep up.
+        let (db_tx, db_rx) = std::sync::mpsc::sync_channel::<DbMsg>(16);
         let counters = Arc::new(HubCounters::default());
         let hub = Arc::new(Self {
             detector: Arc::new(Mutex::new(Detector::new(cfg.anomaly.clone()))),
@@ -159,6 +167,7 @@ impl EventHub {
             dropped: c.dropped.load(Ordering::Relaxed),
             stored: c.stored.load(Ordering::Relaxed),
             store_dropped: c.store_dropped.load(Ordering::Relaxed),
+            store_sampled_out: c.store_sampled_out.load(Ordering::Relaxed),
             store_errors: c.store_errors.load(Ordering::Relaxed),
             alerts: c.alerts.load(Ordering::Relaxed),
             auto_blocks: c.auto_blocks.load(Ordering::Relaxed),
@@ -169,7 +178,7 @@ impl EventHub {
     }
 
     pub fn recent_event(&self, id: &str) -> Option<SecurityEvent> {
-        self.recent.read().iter().rev().find(|e| e.id == id).cloned()
+        self.recent.read().iter().rev().find(|e| e.id == id).map(|e| (**e).clone())
     }
 
     /// An event from memory (freshest) or the store.
@@ -229,7 +238,8 @@ impl EventHub {
     }
 
     async fn ingest(self: Arc<Self>, mut rx: mpsc::Receiver<RawEvent>) {
-        let mut batch: Vec<SecurityEvent> = Vec::with_capacity(1024);
+        let mut batch: Vec<Arc<SecurityEvent>> = Vec::with_capacity(1024);
+        let mut budget = ClientBudget::default();
         let mut flush = tokio::time::interval(Duration::from_millis(250));
         flush.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut streamed_sec = 0i64;
@@ -248,8 +258,12 @@ impl EventHub {
                         streamed += 1;
                         self.publish("event", &ev.summary());
                     }
-                    if self.cfg.store.store_all_events || ev.is_notable() {
-                        batch.push(ev);
+                    if self.should_store(&ev) {
+                        if budget.take(&ev.client_ip, ev.ts / 1000, self.cfg.store.per_client_per_sec) {
+                            batch.push(ev);
+                        } else {
+                            self.counters.store_sampled_out.fetch_add(1, Ordering::Relaxed);
+                        }
                     }
                     if batch.len() >= 1000 {
                         self.flush(&mut batch);
@@ -264,7 +278,15 @@ impl EventHub {
         STREAM_MAX.load(Ordering::Relaxed) as u32
     }
 
-    fn flush(&self, batch: &mut Vec<SecurityEvent>) {
+    /// Every notable event is stored; ordinary traffic only at
+    /// `benign_sample_rate` unless `store_all_events` is set. Statistics
+    /// count every request either way.
+    fn should_store(&self, ev: &SecurityEvent) -> bool {
+        let st = &self.cfg.store;
+        st.store_all_events || ev.is_notable() || (st.benign_sample_rate > 0.0 && sample(&ev.id) < st.benign_sample_rate)
+    }
+
+    fn flush(&self, batch: &mut Vec<Arc<SecurityEvent>>) {
         if batch.is_empty() {
             return;
         }
@@ -276,7 +298,7 @@ impl EventHub {
     }
 
     /// Build the event, score it, and update in-memory state.
-    fn process(&self, raw: RawEvent) -> SecurityEvent {
+    fn process(&self, raw: RawEvent) -> Arc<SecurityEvent> {
         let mut ev = build_event(&raw, self.cfg.store.body_excerpt_bytes);
         let now = ev.ts;
 
@@ -290,17 +312,15 @@ impl EventHub {
         }
         self.stats.lock().record(&ev);
 
+        // Snapshots for policy simulation. Kept unredacted: they never leave
+        // this process except as the redacted method and path of a
+        // simulation diff, and rules must see the real values to replay
+        // faithfully. Moving the request in costs no copy.
+        let snapshot = self.cfg.events.snapshot_capacity > 0
+            && (ev.is_notable() || sample(&ev.id) < self.cfg.events.snapshot_benign_sample);
         if let Some(req) = raw.request
-            && self.cfg.events.snapshot_capacity > 0
+            && snapshot
         {
-            let redactor = raw.waf.redactor();
-            let mut req = req;
-            for (k, v) in req.headers.iter_mut() {
-                let r = redactor.header(k, v);
-                if let std::borrow::Cow::Owned(s) = r {
-                    *v = s;
-                }
-            }
             let mut snaps = self.snapshots.lock();
             if snaps.len() >= self.cfg.events.snapshot_capacity {
                 snaps.pop_front();
@@ -324,12 +344,13 @@ impl EventHub {
             });
         }
 
+        let ev = Arc::new(ev);
         {
             let mut recent = self.recent.write();
             if recent.len() >= self.cfg.events.recent_capacity {
                 recent.pop_front();
             }
-            recent.push_back(ev.clone());
+            recent.push_back(Arc::clone(&ev));
         }
         ev
     }
@@ -385,8 +406,10 @@ impl EventHub {
             {
                 let mut recent = self.recent.write();
                 if let Some(e) = recent.iter_mut().rev().find(|e| e.id == o.event_id) {
-                    e.ai = Some(v.clone());
-                    event_for_alert = Some(e.clone());
+                    let mut updated = (**e).clone();
+                    updated.ai = Some(v.clone());
+                    event_for_alert = Some(updated.clone());
+                    *e = Arc::new(updated);
                 }
             }
             let ev = match event_for_alert {
@@ -471,6 +494,36 @@ impl EventHub {
     }
 }
 
+/// Events stored per client per second. A flood from one client (an attack
+/// or a load test) would otherwise put every one of its requests in the
+/// store: thousands of near-identical rows a second that saturate the
+/// writer and help no one. Statistics and alerts still count them all.
+#[derive(Default)]
+struct ClientBudget {
+    used: HashMap<String, (i64, u32)>,
+}
+
+impl ClientBudget {
+    fn take(&mut self, client: &str, sec: i64, per_sec: u32) -> bool {
+        if per_sec == 0 {
+            return true; // 0 means no limit
+        }
+        if self.used.len() > 50_000 {
+            self.used.retain(|_, (s, _)| *s >= sec);
+        }
+        let e = self.used.entry(client.to_string()).or_insert((sec, 0));
+        if e.0 != sec {
+            *e = (sec, 0);
+        }
+        if e.1 < per_sec {
+            e.1 += 1;
+            true
+        } else {
+            false
+        }
+    }
+}
+
 /// Upper bound for `event` stream messages per second (set from admin config).
 pub static STREAM_MAX: AtomicU64 = AtomicU64::new(200);
 
@@ -521,8 +574,15 @@ pub fn candidate_label(ev: &SecurityEvent, v: &AiVerdict) -> Option<&'static str
     }
 }
 
-/// Deterministic sampling in [0, 1) from the event id.
+/// Deterministic sampling in [0, 1) from the event id. Request ids are
+/// random UUIDs, so their first 32 bits are already uniform; other ids are
+/// hashed.
 fn sample(id: &str) -> f64 {
+    if let Some(head) = id.get(..8)
+        && let Ok(v) = u32::from_str_radix(head, 16)
+    {
+        return v as f64 / (u32::MAX as f64 + 1.0);
+    }
     use sha2::{Digest, Sha256};
     let h = Sha256::digest(id.as_bytes());
     u64::from_be_bytes(h[..8].try_into().unwrap()) as f64 / u64::MAX as f64
@@ -671,9 +731,21 @@ mod tests {
     }
 
     #[test]
+    fn client_budget_limits_each_client_per_second() {
+        let mut b = ClientBudget::default();
+        let taken = (0..100).filter(|_| b.take("1.1.1.1", 10, 50)).count();
+        assert_eq!(taken, 50);
+        assert!(b.take("2.2.2.2", 10, 50), "other clients have their own budget");
+        assert!(b.take("1.1.1.1", 11, 50), "budget resets each second");
+        assert!((0..1000).all(|_| b.take("3.3.3.3", 10, 0)), "0 disables the limit");
+    }
+
+    #[test]
     fn sampling_is_deterministic_and_uniformish() {
         let n = 10_000;
         let hits = (0..n).filter(|i| sample(&format!("id-{i}")) < 0.1).count();
+        let uuids = (0..n).filter(|_| sample(&uuid::Uuid::new_v4().to_string()) < 0.1).count();
+        assert!((800..1200).contains(&uuids), "{uuids}");
         assert!((800..1200).contains(&hits), "{hits}");
         assert_eq!(sample("x"), sample("x"));
     }

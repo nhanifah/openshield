@@ -39,10 +39,17 @@ pub struct StoreConfig {
     pub retention_days: u32,
     /// Keep at most this many events; the oldest are deleted first.
     pub max_events: u64,
-    /// Store every request. When false, only events with a rule match, an
-    /// anomaly, an error status or an AI verdict are stored (statistics
-    /// still count everything).
+    /// Store every request. When false (default), events with a rule
+    /// match, an anomaly, a 5xx status or an error are always stored, plus
+    /// `benign_sample_rate` of the rest. Statistics count every request
+    /// either way. Storing everything costs a lot of write throughput.
     pub store_all_events: bool,
+    /// Share (0 to 1) of ordinary requests stored when `store_all_events`
+    /// is off, so the event list still shows normal traffic.
+    pub benign_sample_rate: f64,
+    /// Stored events per client per second (0: no limit). Applies to all
+    /// stored events, so a flood keeps examples without filling the store.
+    pub per_client_per_sec: u32,
     /// Bytes of (redacted) request body kept for events with a rule match.
     /// 0 keeps none.
     pub body_excerpt_bytes: usize,
@@ -54,7 +61,9 @@ impl Default for StoreConfig {
             path: PathBuf::from("openshield-intel.db"),
             retention_days: 14,
             max_events: 2_000_000,
-            store_all_events: true,
+            store_all_events: false,
+            benign_sample_rate: 0.01,
+            per_client_per_sec: 50,
             body_excerpt_bytes: 2048,
         }
     }
@@ -70,14 +79,18 @@ pub struct EventsConfig {
     pub recent_capacity: usize,
     /// Recent requests kept in memory (redacted) for policy simulation.
     pub snapshot_capacity: usize,
+    /// Share (0 to 1) of ordinary requests kept as snapshots; notable ones
+    /// are always kept. Below 1, a simulation may miss rare paths.
+    pub snapshot_benign_sample: f64,
 }
 
 impl Default for EventsConfig {
     fn default() -> Self {
         Self {
-            queue_capacity: 65_536,
-            recent_capacity: 20_000,
+            queue_capacity: 8_192,
+            recent_capacity: 5_000,
             snapshot_capacity: 2_000,
+            snapshot_benign_sample: 1.0,
         }
     }
 }
@@ -313,6 +326,14 @@ impl IntelConfig {
                 && !self.ai.base_url.starts_with("http://localhost")
             {
                 return Err("intel.ai.base_url must use https (plain http only for localhost)".into());
+            }
+        }
+        for (name, v) in [
+            ("intel.store.benign_sample_rate", self.store.benign_sample_rate),
+            ("intel.events.snapshot_benign_sample", self.events.snapshot_benign_sample),
+        ] {
+            if !(0.0..=1.0).contains(&v) {
+                return Err(format!("{name} must be between 0 and 1"));
             }
         }
         if self.events.queue_capacity == 0 || self.events.recent_capacity == 0 {

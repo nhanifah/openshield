@@ -42,6 +42,8 @@ intel:
   enabled: true
   store:
     path: "__LOGDIR__/intel.db"
+    # The tests look up ordinary requests by id, so store all of them.
+    store_all_events: true
   anomaly:
     window_s: 10
     rate_threshold: 30

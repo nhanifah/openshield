@@ -97,6 +97,12 @@ pub struct AiBrief {
     pub recommended_action: String,
 }
 
+impl AsRef<SecurityEvent> for SecurityEvent {
+    fn as_ref(&self) -> &SecurityEvent {
+        self
+    }
+}
+
 impl SecurityEvent {
     pub fn summary(&self) -> EventSummary {
         EventSummary {

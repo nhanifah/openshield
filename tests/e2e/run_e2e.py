@@ -159,7 +159,7 @@ class Stack:
             )
             self.procs.append(p)
             assert wait_port(addr), f"proxy {name} did not start"
-        time.sleep(0.2)
+        time.sleep(0.6)  # logs are flushed every 200 ms
 
     def alive(self, index):
         return self.procs[index].poll() is None
@@ -288,7 +288,7 @@ def t_status_passthrough(ctx):
 @test("F14", "functional", "Access log records every request as JSON with a request id")
 def t_access_log(ctx):
     request("GET", "/echo/logcheck")
-    time.sleep(0.2)
+    time.sleep(0.6)  # logs are flushed every 200 ms
     lines = (ctx.logdir / "access.log").read_text().splitlines()
     entries = [json.loads(line) for line in lines if line.strip()]
     hit = [e for e in entries if e.get("path") == "/echo/logcheck"]
@@ -299,7 +299,7 @@ def t_access_log(ctx):
 @test("F15", "functional", "Blocked request produces an audit entry naming the rule")
 def t_audit_log(ctx):
     request("GET", "/admin?auditcheck=1")
-    time.sleep(0.2)
+    time.sleep(0.6)  # logs are flushed every 200 ms
     lines = (ctx.logdir / "audit.log").read_text().splitlines()
     entries = [json.loads(line) for line in lines if line.strip()]
     hit = [e for e in entries if e["request"]["query"] == "auditcheck=1"]
@@ -369,7 +369,7 @@ def t_te_obfuscation(ctx):
 @test("S06", "security", "Audit log does not store Authorization or Cookie values", "medium")
 def t_audit_secrets(ctx):
     request("GET", "/admin?secretcheck=1", {"Authorization": "Bearer SUPERSECRET-AUTH", "Cookie": "session=SUPERSECRET-COOKIE"})
-    time.sleep(0.2)
+    time.sleep(0.6)  # logs are flushed every 200 ms
     text = (ctx.logdir / "audit.log").read_text()
     leaked = [s for s in ("SUPERSECRET-AUTH", "SUPERSECRET-COOKIE") if s in text]
     return not leaked, f"leaked={leaked}"
@@ -379,7 +379,7 @@ def t_audit_secrets(ctx):
 def t_text_log_panic(ctx):
     body = b"q=" + b"a" * 497 + "é".encode() + b"&x=1' OR '1'='1"
     r1 = request("POST", "/echo", {"Content-Type": "application/x-www-form-urlencoded"}, body, addr=PROXY_TEXT)
-    time.sleep(0.3)
+    time.sleep(0.6)  # logs are flushed every 200 ms
     r2 = request("GET", "/echo/after", addr=PROXY_TEXT)
     audit = (ctx.logdir / "text-audit.log").read_text(errors="replace")
     stderr = (ctx.logdir / "e2e-text.yaml.stderr").read_text(errors="replace")
@@ -392,7 +392,7 @@ def t_text_log_panic(ctx):
 def t_log_injection(ctx):
     body = b"x=1' OR '1'='1&note=\n[AUDIT] FORGED-ENTRY action=allow"
     request("POST", "/echo", {"Content-Type": "application/x-www-form-urlencoded"}, body, addr=PROXY_TEXT)
-    time.sleep(0.3)
+    time.sleep(0.6)  # logs are flushed every 200 ms
     lines = (ctx.logdir / "text-audit.log").read_text(errors="replace").splitlines()
     forged = [l for l in lines if l.startswith("[AUDIT] FORGED-ENTRY")]
     return not forged, f"forged_lines={len(forged)}"

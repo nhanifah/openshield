@@ -255,6 +255,10 @@ fn open_conn(path: &Path) -> Result<Connection> {
     c.busy_timeout(Duration::from_secs(5)).map_err(e)?;
     c.pragma_update(None, "journal_mode", "WAL").map_err(e)?;
     c.pragma_update(None, "synchronous", "NORMAL").map_err(e)?;
+    // Fewer, larger checkpoints: under load the default (1000 pages) made
+    // the writer spend about half its time checkpointing and in fsync.
+    c.pragma_update(None, "wal_autocheckpoint", 8000).map_err(e)?;
+    c.pragma_update(None, "journal_size_limit", 64 * 1024 * 1024).map_err(e)?;
     c.pragma_update(None, "foreign_keys", "ON").map_err(e)?;
     Ok(c)
 }
@@ -297,7 +301,7 @@ impl Store {
 
     // ---- events -------------------------------------------------------
 
-    pub fn insert_events(&self, events: &[SecurityEvent]) -> Result<()> {
+    pub fn insert_events<E: AsRef<SecurityEvent>>(&self, events: &[E]) -> Result<()> {
         let mut c = self.write.lock();
         let tx = c.transaction().map_err(e)?;
         {
@@ -308,6 +312,7 @@ impl Store {
                 )
                 .map_err(e)?;
             for ev in events {
+                let ev = ev.as_ref();
                 let rules = format!(
                     ",{},",
                     ev.matched_rules.iter().map(|r| r.id.as_str()).collect::<Vec<_>>().join(",")

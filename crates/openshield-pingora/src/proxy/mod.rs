@@ -314,6 +314,10 @@ impl ProxyHttp for ReverseProxyHandler {
             // An empty chunk (not None) avoids signalling end-of-body to the
             // upstream (`upstream_end_of_body = end || data.is_none()`).
             BodyVerdict::Hold => *body = Some(bytes::Bytes::new()),
+            // An empty release with no chunk from pingora (a bodyless request
+            // at end of stream) must stay `None`: an empty chunk after the
+            // upstream body finished makes pingora warn on every request.
+            BodyVerdict::Forward(released) if released.is_empty() && body.is_none() => {}
             BodyVerdict::Forward(released) => *body = Some(bytes::Bytes::from(released)),
             BodyVerdict::Block(intervention) => {
                 // Status and content are rendered from pending_block in
@@ -467,14 +471,7 @@ impl ProxyHttp for ReverseProxyHandler {
 
         // Read before `finish`, which moves these into the audit entry.
         let action = ctx.tx.action().to_string();
-        let raw_parts = self.intel.as_ref().map(|_| {
-            let body = if ctx.tx.matched_rules().is_empty() {
-                Vec::new()
-            } else {
-                ctx.tx.request_body().to_vec()
-            };
-            (ctx.tx.request().cloned(), body, ctx.tx.waf_arc())
-        });
+        let keep_body = !ctx.tx.matched_rules().is_empty();
         let detection_only = ctx.tx.waf().settings().detection_only;
 
         let record = ctx.tx.finish(ResponseOutcome {
@@ -508,10 +505,12 @@ impl ProxyHttp for ReverseProxyHandler {
         }
         REQUEST_DURATION.observe(record.access.duration_ms / 1000.0);
 
-        if let (Some(hub), Some((request, body, waf))) = (&self.intel, raw_parts) {
+        if let Some(hub) = &self.intel {
+            // Moved out of the finished transaction, not copied.
+            let body = if keep_body { ctx.tx.take_request_body() } else { Vec::new() };
             hub.submit(RawEvent {
-                waf,
-                request,
+                waf: ctx.tx.waf_arc(),
+                request: ctx.tx.take_request(),
                 access: record.access,
                 audit: record.audit,
                 action,

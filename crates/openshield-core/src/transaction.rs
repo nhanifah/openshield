@@ -199,6 +199,21 @@ impl Transaction {
         self.request.as_ref()
     }
 
+    /// Move the recorded request out (after [`finish`]), to hand it on
+    /// without a copy.
+    ///
+    /// [`finish`]: Transaction::finish
+    pub fn take_request(&mut self) -> Option<RequestData> {
+        self.request.take()
+    }
+
+    /// Move the buffered request body out (after [`finish`]).
+    ///
+    /// [`finish`]: Transaction::finish
+    pub fn take_request_body(&mut self) -> Vec<u8> {
+        std::mem::take(&mut self.req.buffer.buf)
+    }
+
     /// The buffered (possibly truncated) request body.
     pub fn request_body(&self) -> &[u8] {
         &self.req.buffer.buf
