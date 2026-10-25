@@ -86,6 +86,21 @@ The dashboard is an operational security console: operators open it to decide wh
 - Touch targets at least 40 px tall on narrow screens; no horizontal page scroll at 390 px wide.
 - Respect `prefers-reduced-motion`.
 
+### Layout consistency
+
+- Cards side by side in one grid row share a height (`align-items: stretch`); a grid of N tiles uses a column count that divides N at every breakpoint (KPIs: 6 / 3 / 2), so no row ends with an orphan.
+- One component, one look: toggle chips are `.chip-toggle` everywhere, stat tiles match `.kpi`, a pill never sits inside another pill, and nothing uses strike-through to mean "off" (use `aria-pressed` with a dimmed marker).
+- Fixed-width table columns are sized for the widest value they can hold (for example "suspicious 100%"), not for today's data. The free-text column (request path, comment) absorbs the slack and truncates.
+- A wide data table may scroll sideways inside its card on narrow screens; the page itself never does. Segmented controls stay on one row and scroll, keeping the selected option in view.
+
+### Visual check before shipping (mandatory)
+
+Every UI change is checked in the built-in browser against a running instance (`python3 tests/dashboard/live_stack.py`), not judged from the diff:
+
+1. Rebuild (`cargo build --release --workspace`; the assets are embedded), restart the instance, sign in.
+2. Inject `tests/dashboard/ui_audit.js` and run it on every view and every Settings tab, in dark and light, at 1600, 1282, 1024 and 375 px wide. It reports strike-through, nested pills, uneven control rows, overflow, badges or buttons clipped by a cell, uneven card rows, mixed container styles, WCAG contrast and small touch targets. The result must be `total: 0` everywhere; `scrollsX` entries are informational.
+3. Look at screenshots of each view as well. The audit cannot see everything (a misleading label, a cramped layout), and an anomaly seen by eye is fixed even when the audit passes. When the audit missed it, add a check for it.
+
 ### Copy
 
 - Sentence case. Name things the way operators do: "Blocked", "Challenged", "Client", not internal field names.

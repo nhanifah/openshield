@@ -132,8 +132,20 @@ impl Authenticator {
         a.store = Some(store);
         a.reload()?;
         if a.admin_count() == 0 {
-            let token = new_token();
-            crate::vault::write_private_file(&setup_file, &format!("{token}\n"))?;
+            // Reuse an unfinished setup token across restarts, so restarting
+            // the server mid-setup does not sign the person out.
+            let existing = std::fs::read_to_string(&setup_file)
+                .ok()
+                .map(|t| t.trim().to_string())
+                .filter(|t| t.starts_with("osk_") && t.len() == 68);
+            let token = match existing {
+                Some(t) => t,
+                None => {
+                    let t = new_token();
+                    crate::vault::write_private_file(&setup_file, &format!("{t}\n"))?;
+                    t
+                }
+            };
             log::warn!(
                 "No admin user exists. First-run setup token written to {} (mode 0600): sign in to the dashboard with \
                  it and create an admin user. The token stops working once that user exists.",
@@ -352,6 +364,18 @@ mod tests {
         assert!(!a.in_setup());
         assert!(!file.exists(), "setup file is deleted");
         assert!(a.check(&token, ip).is_none(), "setup token no longer works");
+    }
+
+    #[test]
+    fn setup_token_survives_a_restart() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("setup-token");
+        let store = Arc::new(Store::memory());
+        let _a = Authenticator::with_store(&[], Arc::clone(&store), file.clone()).unwrap();
+        let first = std::fs::read_to_string(&file).unwrap();
+        let b = Authenticator::with_store(&[], store, file.clone()).unwrap();
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), first);
+        assert!(b.check(first.trim(), "127.0.0.1".parse().unwrap()).is_some());
     }
 
     #[test]

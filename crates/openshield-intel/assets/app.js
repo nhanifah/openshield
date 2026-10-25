@@ -165,12 +165,13 @@
     if (src === 'rule') return h('span', { class: 'badge rule-src', title: 'Derived from a rule match' }, icon('policy'), 'Rule');
     return h('span', { class: 'badge rule-src', text: str(src) || 'unknown' });
   }
-  function aiBadge(ai) {
+  // `compact` for table cells, where the column header says "AI (risk)".
+  function aiBadge(ai, compact) {
     if (!ai || typeof ai !== 'object') return h('span', { class: 'faint', text: '—' });
     const cat = str(ai.category) || 'unknown';
     const k = cat === 'malicious' ? 'block' : (cat === 'suspicious' || cat === 'policy_violation') ? 'suspicious' : cat === 'legitimate' ? 'pass' : 'unknown';
     const label = cat.replace(/_/g, ' ');
-    const risk = isFinite(ai.risk) && ai.risk !== null ? ' · risk ' + pct(ai.risk) : '';
+    const risk = isFinite(ai.risk) && ai.risk !== null ? (compact ? ' ' : ' · risk ') + pct(ai.risk) : '';
     return h('span', { class: 'badge act-' + k, title: 'AI verdict (advisory, never enforced). Category ' + label + ', risk ' + score(ai.risk) + ', confidence ' + score(ai.confidence) }, label + risk);
   }
   function anomalyText(x) {
@@ -245,11 +246,19 @@
       const b = h('button', { type: 'button', text: t, 'aria-pressed': String(v === value) });
       b.addEventListener('click', () => {
         for (const x of btns) x.setAttribute('aria-pressed', String(x === b));
+        reveal(b);
         onChange(v);
       });
       btns.push(b);
       el.appendChild(b);
     }
+    // On narrow screens the row scrolls; keep the selected option in view.
+    function reveal(b) {
+      const l = b.offsetLeft, r = l + b.offsetWidth;
+      if (l < el.scrollLeft) el.scrollLeft = Math.max(0, l - 16);
+      else if (r > el.scrollLeft + el.clientWidth) el.scrollLeft = r - el.clientWidth + 16;
+    }
+    requestAnimationFrame(() => { const a = btns.find((x) => x.getAttribute('aria-pressed') === 'true'); if (a) reveal(a); });
     return el;
   }
   function roleNote(role, what) { return h('p', { class: 'hint row' }, icon('lock'), what + ' requires the ' + role + ' role.'); }
@@ -670,8 +679,7 @@
     const pad = { l: 46, r: 12, t: 10, b: 24 };
     const legend = h('div', { class: 'legend', role: 'group', 'aria-label': 'Series' });
     for (const [k, label] of SERIES.slice().reverse()) {
-      const b = h('button', { type: 'button', class: 'chip chip-toggle', 'aria-pressed': 'true', title: 'Show or hide ' + label }, cvar(h('span', { class: 'swatch' }), 'var(--c-' + k + ')'), label);
-      cvar(b, 'var(--c-' + k + ')');
+      const b = h('button', { type: 'button', class: 'chip-toggle act-' + k, 'aria-pressed': 'true', title: 'Show or hide ' + label, text: label });
       b.addEventListener('click', () => {
         if (hidden.has(k)) hidden.delete(k); else hidden.add(k);
         b.setAttribute('aria-pressed', String(!hidden.has(k)));
@@ -848,16 +856,15 @@
     chartCard.body.appendChild(chart.el);
     root.appendChild(chartCard.el);
 
-    const ips = card('Top clients', { flush: true });
-    const paths = card('Top paths', { flush: true });
-    const rules = card('Rules matched', { flush: true });
+    const ips = card('Top clients', { flush: true, sub: 'top 10' });
+    const paths = card('Top paths', { flush: true, sub: 'top 10' });
+    const rules = card('Rules matched', { flush: true, sub: 'top 10' });
     const codes = card('Status codes');
     const methods = card('Methods');
     const countries = card('Countries');
     const aiCard = card('AI analysis', { actions: h('a', { href: '#/ai', class: 'btn btn-sm', text: 'Details' }) });
-    root.appendChild(h('div', { class: 'grid grid-4' }, ips.el, paths.el, rules.el));
+    root.appendChild(h('div', { class: 'grid tops-grid' }, ips.el, paths.el, rules.el));
     root.lastChild.style.marginTop = 'var(--gap)';
-    ips.el.classList.add('span-2');
     root.appendChild(h('div', { class: 'grid grid-4' }, codes.el, methods.el, countries.el, aiCard.el));
     root.lastChild.style.marginTop = 'var(--gap)';
     for (const c of [ips, paths, rules, codes, methods, countries, aiCard]) c.body.replaceChildren(stateBox('loading', 'Loading…'));
@@ -885,10 +892,10 @@
       const req = t.requests;
       const share = (v) => req > 0 ? pct(ratio(v, req), v / req < 0.1 ? 1 : 0) + ' of requests' : 'no requests yet';
       const set = (k, v, sub, title) => { tiles[k].val.textContent = v; tiles[k].sub.textContent = sub || ' '; tiles[k].val.title = title || ''; tiles[k].win.textContent = 'last ' + range; };
-      set('requests', compact(req), compact(data.rps_current) + ' req/s now · ' + fmtBytes(t.bytes_out) + ' sent', full(req) + ' requests');
+      set('requests', compact(req), compact(data.rps_current) + ' req/s now', full(req) + ' requests, ' + fmtBytes(t.bytes_out) + ' sent');
       set('block', compact(t.block), share(t.block), full(t.block));
       set('challenge', compact(t.challenge), share(t.challenge), full(t.challenge));
-      set('suspicious', compact(t.suspicious), 'anomaly ≥ 0.5 or AI-flagged', full(t.suspicious));
+      set('suspicious', compact(t.suspicious), 'anomalous or AI-flagged', full(t.suspicious) + ' requests with anomaly ≥ 0.5 or an AI verdict of suspicious/malicious');
       set('p95', fmtMs(lat.p95), 'p50 ' + fmtMs(lat.p50) + ' · p99 ' + fmtMs(lat.p99));
       set('s5xx', compact(t.status_5xx), share(t.status_5xx), full(t.status_5xx));
     }
@@ -927,7 +934,9 @@
       renderKpis();
       if (data.alerts_open && isFinite(data.alerts_open.open)) { S.alertsOpen = data.alerts_open.open; renderAlertCount(); }
       chart.set(data);
-      const tipIps = Array.isArray(data.top_ips) ? data.top_ips : [];
+      // Every top list shows the same number of rows, so the cards line up.
+      const TOP = 10;
+      const tipIps = Array.isArray(data.top_ips) ? data.top_ips.slice(0, TOP) : [];
       ips.body.replaceChildren(tipIps.length ? table([
         { label: 'Client', render: (r) => filterLink(str(r.ip), { ip: r.ip }) },
         { label: 'Country', render: (r) => str(r.country) || '—' },
@@ -936,13 +945,13 @@
         { label: 'Anomaly', render: (r) => anomalyMeter(r.anomaly_score) },
         { label: '', cls: 'actions', render: (r) => can('operator') ? h('button', { type: 'button', class: 'btn btn-sm btn-danger', text: 'Block', 'aria-label': 'Block ' + str(r.ip), onclick: () => blockDialog(str(r.ip), 'High anomaly score from overview') }) : '' },
       ], tipIps, { class: 'compact', caption: 'Top client IPs' }) : stateBox('empty', 'No clients in this range'));
-      const tp = Array.isArray(data.top_paths) ? data.top_paths : [];
+      const tp = Array.isArray(data.top_paths) ? data.top_paths.slice(0, TOP) : [];
       paths.body.replaceChildren(tp.length ? table([
         { label: 'Path', cls: 'cell-path', render: (r) => filterLink(str(r.path), { path: r.path }) },
         { label: 'Req', num: true, render: (r) => compact(r.count) },
         { label: 'Blocked', num: true, render: (r) => compact(r.blocked) },
       ], tp, { class: 'compact' }) : stateBox('empty', 'No paths in this range'));
-      const tr = Array.isArray(data.top_rules) ? data.top_rules : [];
+      const tr = Array.isArray(data.top_rules) ? data.top_rules.slice(0, TOP) : [];
       rules.body.replaceChildren(tr.length ? table([
         { label: 'Rule', cls: 'cell-path', render: (r) => filterLink(str(r.id), { rule: r.id }) },
         { label: 'Hits', num: true, render: (r) => compact(r.count) },
@@ -1006,13 +1015,11 @@
     const clearBtn = h('button', { type: 'button', class: 'btn', text: 'Clear' });
     const chips = h('div', { class: 'chips', role: 'group', 'aria-label': 'Filter by action' });
     for (const a of ACTIONS) {
-      const b = h('button', { type: 'button', class: 'chip chip-toggle', 'aria-pressed': 'true' }, actionBadge(a));
-      cvar(b, 'var(--c-' + a + ')');
+      const b = h('button', { type: 'button', class: 'chip-toggle act-' + a, 'aria-pressed': 'true', text: a.charAt(0).toUpperCase() + a.slice(1) });
       b.addEventListener('click', () => { if (shown.has(a)) shown.delete(a); else shown.add(a); b.setAttribute('aria-pressed', String(shown.has(a))); refilter(); });
       chips.appendChild(b);
     }
-    const susp = h('button', { type: 'button', class: 'chip chip-toggle', 'aria-pressed': 'false', text: 'Suspicious only' });
-    cvar(susp, 'var(--c-suspicious)');
+    const susp = h('button', { type: 'button', class: 'chip-toggle act-suspicious', 'aria-pressed': 'false', text: 'Suspicious only' });
     susp.addEventListener('click', () => { suspOnly = !suspOnly; susp.setAttribute('aria-pressed', String(suspOnly)); refilter(); });
     chips.appendChild(susp);
     root.append(pageHead('Live', skipEl, rateEl, countEl, pauseBtn, clearBtn), h('div', { class: 'row', }, chips));
@@ -1022,7 +1029,7 @@
     const placeholder = h('tr', null, h('td', { colSpan: 9 }, stateBox('empty', 'Waiting for events from the live stream…')));
     tbody.appendChild(placeholder);
     const tbl = h('table', { class: 'tbl compact live-table' },
-      h('thead', null, h('tr', null, ['Time', 'Action', 'Status', 'Method', 'Request', 'Client', 'Rules', 'Anomaly', 'AI'].map((t) => h('th', { scope: 'col', text: t })))), tbody);
+      h('thead', null, h('tr', null, ['Time', 'Action', 'Status', 'Method', 'Request', 'Client', 'Rules', 'Anomaly', 'AI (risk)'].map((t) => h('th', { scope: 'col', text: t })))), tbody);
     const c = card('Stream', { flush: true, sub: 'newest first · last ' + MAX + ' kept' });
     c.body.appendChild(h('div', { class: 'live-wrap table-wrap' }, tbl));
     root.appendChild(c.el);
@@ -1042,7 +1049,7 @@
         h('td', { class: 'mono' }, str(ev.client_ip), ev.country ? h('span', { class: 'faint', text: ' ' + ev.country }) : null),
         h('td', { class: 'mono cell-path', text: Array.isArray(ev.rules) && ev.rules.length ? ev.rules.join(', ') : '—' }),
         h('td', null, anomalyText(ev.anomaly_score)),
-        h('td', null, aiBadge(ev.ai)));
+        h('td', null, aiBadge(ev.ai, true)));
       evOf.set(tr, ev);
       return tr;
     }
@@ -1099,7 +1106,7 @@
         if (!tr) continue;
         const ev = evOf.get(tr);
         if (ev) ev.ai = it.ai;
-        tr.cells[8].replaceChildren(aiBadge(it.ai));
+        tr.cells[8].replaceChildren(aiBadge(it.ai, true));
       }
     });
     ctx.every(1000, () => { rateEl.textContent = compact(rate) + ' ev/s'; rate = 0; if (!paused) seen = 0; });
@@ -1120,10 +1127,11 @@
       ai_category: select([['', 'Any AI verdict']].concat(AI_CATEGORIES.map((a) => [a, a])), F.ai_category),
     };
     const labels = { action: 'Action', ip: 'Client IP', path: 'Path', rule: 'Rule', q: 'Text', min_anomaly: 'Min anomaly', ai_category: 'AI category' };
-    const form = h('form', { class: 'form-row', role: 'search', 'aria-label': 'Filter events' },
+    const form = h('form', { class: 'filter-grid', role: 'search', 'aria-label': 'Filter events' },
       FILTERS.map((k) => field(labels[k], inputs[k])),
-      h('button', { type: 'submit', class: 'btn btn-primary' }, icon('filter'), 'Apply'),
-      h('button', { type: 'button', class: 'btn', text: 'Reset', onclick: () => go('events') }));
+      h('div', { class: 'filter-actions' },
+        h('button', { type: 'submit', class: 'btn btn-primary' }, icon('filter'), 'Apply'),
+        h('button', { type: 'button', class: 'btn', text: 'Reset', onclick: () => go('events') })));
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       const p = {};
@@ -1142,7 +1150,7 @@
     root.append(fc.el);
 
     const ROW = 36, OVER = 8;
-    const COLS = ['Time', 'Action', 'Status', 'Method', 'Request', 'Client', 'Rules', 'Anomaly', 'AI', 'Label'];
+    const COLS = ['Time', 'Action', 'Status', 'Method', 'Request', 'Client', 'Rules', 'Anomaly', 'AI (risk)', 'Label'];
     const vbody = h('div', { class: 'vbody', role: 'rowgroup' });
     const vhead = h('div', { class: 'vhead', role: 'row' }, COLS.map((t) => h('div', { role: 'columnheader', text: t })));
     const inner = h('div', { class: 'vlist-inner', role: 'table', 'aria-label': 'Events', 'aria-rowcount': '-1' }, vhead, vbody);
@@ -1165,7 +1173,7 @@
         h('div', { role: 'cell', class: 'mono' }, str(ev.client_ip), ev.country ? h('span', { class: 'faint', text: ' ' + ev.country }) : null),
         h('div', { role: 'cell', class: 'mono', text: Array.isArray(ev.rules) && ev.rules.length ? ev.rules.join(', ') : '—' }),
         h('div', { role: 'cell' }, anomalyText(ev.anomaly_score)),
-        h('div', { role: 'cell' }, aiBadge(ev.ai)),
+        h('div', { role: 'cell' }, aiBadge(ev.ai, true)),
         h('div', { role: 'cell' }, labelBadge(ev.label)),
       ];
     }
@@ -1690,7 +1698,7 @@
     const rulesCard = card('Rules', { flush: true });
     const left = h('div', { class: 'stack' }, ed.el, results.el);
     const right = h('div', { class: 'stack' }, versions.el, admin ? changes.el : null);
-    root.appendChild(h('div', { class: 'grid grid-2' }, left, right));
+    root.appendChild(h('div', { class: 'grid policy-grid' }, left, right));
     rulesCard.el.style.marginTop = 'var(--gap)';
     root.appendChild(rulesCard.el);
     for (const c of [versions, changes, rulesCard]) c.body.appendChild(stateBox('loading', 'Loading…'));
@@ -1783,10 +1791,9 @@
     function renderVersions(list) {
       versions.body.replaceChildren(list.length ? table([
         { label: 'Ver', num: true, render: (r) => str(r.version) },
-        { label: 'When', render: (r) => timeEl(r.ts) },
-        { label: 'By', render: (r) => str(r.actor) || '—' },
-        { label: 'Comment', cls: 'wrap', render: (r) => str(r.comment) || '—' },
-        { label: 'Source', render: (r) => str(r.source) || '—' },
+        { label: 'When', cls: 'nowrap', render: (r) => timeEl(r.ts) },
+        { label: 'By', cls: 'nowrap', render: (r) => h('span', { text: str(r.actor) || '—', title: 'Source: ' + (str(r.source) || 'unknown') }) },
+        { label: 'Comment', cls: 'cell-path', render: (r) => h('span', { text: str(r.comment) || '—', title: str(r.comment) }) },
         { label: 'Status', render: (r) => stBadge(r.status) },
         { label: 'Rules', num: true, render: (r) => full(r.rule_count) },
         { label: '', cls: 'actions', render: (r) => {
@@ -2031,7 +2038,7 @@
   VIEWS.audit = function (root, params, ctx) {
     if (!can('admin')) { root.append(pageHead('Audit'), stateBox('locked', 'The admin audit log is visible to admins only.')); return; }
     let limit = 200;
-    const filter = h('input', { type: 'search', placeholder: 'Filter actor, action, target…', 'aria-label': 'Filter audit entries' });
+    const filter = h('input', { type: 'search', class: 'search-input', placeholder: 'Filter entries', 'aria-label': 'Filter audit entries by actor, action or target' });
     const lim = select([100, 200, 500, 1000], limit, { 'aria-label': 'Entries to load', onchange: (e) => { limit = Number(e.target.value); load(); } });
     const refresh = h('button', { type: 'button', class: 'btn btn-icon', 'aria-label': 'Refresh audit log', onclick: () => load() }, icon('refresh'));
     root.append(pageHead('Audit', filter, lim, refresh));
