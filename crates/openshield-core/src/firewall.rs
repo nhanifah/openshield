@@ -56,6 +56,7 @@ pub struct Waf {
     pub(crate) bytes_lists: BytesListMatcher,
     pub(crate) geoip: Option<GeoIp>,
     pub(crate) challenge: Option<ChallengeManager>,
+    pub(crate) error_pages: crate::error_page::ErrorPagesConfig,
     pub(crate) redactor: Redactor,
     pub(crate) settings: Settings,
     pub(crate) has_request_body_rules: bool,
@@ -102,9 +103,13 @@ impl Waf {
         let (ip_lists, bytes_lists) = lists::build_from_config(&config.lists)
             .map_err(|e| format!("failed to load lists: {e}"))?;
 
+        config
+            .error_pages
+            .validate()
+            .map_err(|e| format!("error_pages: {e}"))?;
         let challenge = config.challenge.as_ref().map(|cfg| {
             info!("Challenge page enabled (Turnstile)");
-            ChallengeManager::new(cfg)
+            ChallengeManager::new(cfg, &config.error_pages)
         });
 
         if config.detection_only {
@@ -123,6 +128,7 @@ impl Waf {
             bytes_lists,
             geoip,
             challenge,
+            error_pages: config.error_pages.clone(),
             redactor: Redactor::new(&config.redaction),
             settings: Settings::from(config),
             has_request_body_rules,
@@ -141,6 +147,11 @@ impl Waf {
 
     pub fn settings(&self) -> &Settings {
         &self.settings
+    }
+
+    /// How block, rate-limit and error pages look.
+    pub fn error_pages(&self) -> &crate::error_page::ErrorPagesConfig {
+        &self.error_pages
     }
 
     pub fn challenge(&self) -> Option<&ChallengeManager> {

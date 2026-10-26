@@ -50,6 +50,10 @@ pub struct WafConfig {
     #[serde(default)]
     pub challenge: Option<ChallengeConfig>,
 
+    /// Pages sent for blocks, rate limits and upstream errors.
+    #[serde(default)]
+    pub error_pages: crate::error_page::ErrorPagesConfig,
+
     #[serde(default)]
     pub token_configurations: Vec<TokenConfig>,
 

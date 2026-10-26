@@ -11,6 +11,7 @@
 pub mod assets;
 pub mod auth;
 mod geo_api;
+mod pages_api;
 mod passkey_api;
 mod settings_api;
 
@@ -51,6 +52,8 @@ pub struct App {
     pub passkeys: passkey_api::PasskeyState,
     /// IP location and ASN databases.
     pub geo: Arc<crate::geo::GeoService>,
+    /// Error-page previews waiting to be shown.
+    pub previews: pages_api::Previews,
 }
 
 type S = State<Arc<App>>;
@@ -208,6 +211,9 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/users", get(settings_api::list_users).post(settings_api::create_user))
         .route("/api/users/{name}", axum::routing::put(settings_api::set_role).delete(settings_api::delete_user))
         .route("/api/users/{name}/rotate", post(settings_api::rotate_user))
+        .route("/api/error-pages", get(pages_api::get_pages).put(pages_api::put_pages))
+        .route("/api/error-pages/preview", post(pages_api::preview))
+        .route("/preview/{id}", get(pages_api::show_preview))
         .route("/api/geo", get(geo_api::get_geo))
         .route("/api/geo/impact", post(geo_api::impact))
         .route("/api/geo/rules", axum::routing::put(geo_api::put_rules))
@@ -231,14 +237,20 @@ async fn security_headers(mut res: Response) -> Response {
     let set = |h: &mut axum::http::HeaderMap, k: header::HeaderName, v: &'static str| {
         h.insert(k, HeaderValue::from_static(v));
     };
-    set(
-        h,
-        header::CONTENT_SECURITY_POLICY,
-        "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; \
-         frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
-    );
+    // Error-page previews set their own CSP (no scripts, framed by the
+    // dashboard only); everything else gets the dashboard's.
+    let preview = h.contains_key(pages_api::PREVIEW_MARKER);
+    h.remove(pages_api::PREVIEW_MARKER);
+    if !preview {
+        set(
+            h,
+            header::CONTENT_SECURITY_POLICY,
+            "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; \
+             frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+        );
+        set(h, header::X_FRAME_OPTIONS, "DENY");
+    }
     set(h, header::X_CONTENT_TYPE_OPTIONS, "nosniff");
-    set(h, header::X_FRAME_OPTIONS, "DENY");
     set(h, header::REFERRER_POLICY, "no-referrer");
     set(h, header::CACHE_CONTROL, "no-store");
     h.insert("cross-origin-opener-policy", HeaderValue::from_static("same-origin"));

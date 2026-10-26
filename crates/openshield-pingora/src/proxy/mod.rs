@@ -16,6 +16,7 @@ use openshield_core::challenge::{ChallengeManager, VerificationForm};
 use openshield_core::logging::Logger;
 use openshield_core::waf::data::{RequestData, ResponseData};
 use openshield_core::{BodyVerdict, Intervention, ResponseOutcome, Verdict, Waf};
+use openshield_core::error_page::{PageContext, PageKind};
 use openshield_intel::controls::Controls;
 use openshield_intel::geo::GeoService;
 use openshield_intel::hub::{EventHub, RawEvent};
@@ -147,6 +148,74 @@ fn extract_response_data(resp: &pingora::http::ResponseHeader) -> ResponseData {
     }
 }
 
+/// Send the configured error page for `status` (HTML, JSON or text, by the
+/// client's Accept header). Does nothing if a response was already started.
+async fn send_error_page(session: &mut Session, waf: &Waf, status: u16, kind: PageKind, request_id: &str, client_ip: Option<IpAddr>) {
+    if session.response_written().is_some() {
+        return;
+    }
+    let code = http::StatusCode::from_u16(status).unwrap_or(http::StatusCode::INTERNAL_SERVER_ERROR);
+    let accept = session
+        .req_header()
+        .headers
+        .get(http::header::ACCEPT)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let ip = client_ip.map(|i| i.to_string());
+    let page = waf.error_pages().render(
+        &PageContext {
+            status,
+            kind,
+            request_id,
+            client_ip: ip.as_deref(),
+            now: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs() as i64)
+                .unwrap_or(0),
+        },
+        accept.as_deref(),
+    );
+    let body = page.body.into_bytes();
+    let mut h = pingora::http::ResponseHeader::build(code, Some(8)).unwrap();
+    let _ = h.insert_header("Content-Type", page.content_type);
+    let _ = h.insert_header("Content-Length", body.len().to_string());
+    let _ = h.insert_header("Cache-Control", "no-store");
+    let _ = h.insert_header("X-Content-Type-Options", "nosniff");
+    let _ = h.insert_header("X-Request-ID", request_id);
+    if let Some(csp) = page.csp {
+        let _ = h.insert_header("Content-Security-Policy", csp);
+    }
+    if matches!(status, 429 | 503) {
+        let _ = h.insert_header("Retry-After", "60");
+    }
+    let _ = session.write_response_header(Box::new(h), false).await;
+    let _ = session.write_response_body(Some(bytes::Bytes::from(body)), true).await;
+}
+
+/// The page for a block: geo rules get the "geo" page, others by status.
+fn block_page_kind(tx: &openshield_core::transaction::Transaction, status: u16) -> PageKind {
+    let geo = tx
+        .matched_rules()
+        .iter()
+        .rev()
+        .find(|(_, action)| action == "block")
+        .is_some_and(|(id, _)| id.starts_with(openshield_core::compiler::GEO_RULE_PREFIX));
+    if geo && status == 403 { PageKind::Geo } else { PageKind::for_status(status) }
+}
+
+/// A rule's own response body is sent as configured; otherwise the error page.
+async fn send_intervention(session: &mut Session, tx: &openshield_core::transaction::Transaction, intervention: &Intervention) {
+    let request_id = tx.id().to_string();
+    if intervention.content.is_some() {
+        send_block_response(session, intervention, &request_id).await;
+        return;
+    }
+    let kind = block_page_kind(tx, intervention.status_code);
+    let client_ip = tx.request().and_then(|r| r.client_ip);
+    let waf = tx.waf_arc();
+    send_error_page(session, &waf, intervention.status_code, kind, &request_id, client_ip).await;
+}
+
 async fn send_block_response(session: &mut Session, intervention: &Intervention, request_id: &str) {
     let code =
         http::StatusCode::from_u16(intervention.status_code).unwrap_or(http::StatusCode::FORBIDDEN);
@@ -256,9 +325,12 @@ impl ProxyHttp for ReverseProxyHandler {
 
     async fn request_filter(&self, session: &mut Session, ctx: &mut Self::CTX) -> Result<bool> {
         if header_block_size(&session.req_header().headers) > self.max_request_header_bytes {
-            ctx.tx
-                .set_request(extract_request_data(session, &self.trusted_proxies));
-            let _ = session.respond_error(431).await;
+            let req = extract_request_data(session, &self.trusted_proxies);
+            let ip = req.client_ip;
+            ctx.tx.set_request(req);
+            let waf = ctx.tx.waf_arc();
+            let id = ctx.tx.id().to_string();
+            send_error_page(session, &waf, 431, PageKind::TooLarge, &id, ip).await;
             return Ok(true);
         }
         let mut req_data = extract_request_data(session, &self.trusted_proxies);
@@ -280,10 +352,10 @@ impl ProxyHttp for ReverseProxyHandler {
             ctx.tx.record_external(DYNAMIC_BLOCK_RULE, "block");
             let intervention = Intervention {
                 status_code: 403,
-                content_type: Some("text/plain".into()),
-                content: Some("blocked".into()),
+                content_type: None,
+                content: None,
             };
-            send_block_response(session, &intervention, &request_id).await;
+            send_intervention(session, &ctx.tx, &intervention).await;
             return Ok(true);
         }
 
@@ -299,7 +371,7 @@ impl ProxyHttp for ReverseProxyHandler {
         match ctx.tx.request_headers(req_data) {
             Verdict::Pass | Verdict::Allow => Ok(false),
             Verdict::Block(intervention) => {
-                send_block_response(session, &intervention, &request_id).await;
+                send_intervention(session, &ctx.tx, &intervention).await;
                 Ok(true)
             }
             Verdict::Challenge => match waf.challenge() {
@@ -355,8 +427,7 @@ impl ProxyHttp for ReverseProxyHandler {
         // A body-phase rule asked to block: render the configured block
         // response.
         if let Some(intervention) = ctx.pending_block.take() {
-            let request_id = ctx.tx.id().to_string();
-            send_block_response(session, &intervention, &request_id).await;
+            send_intervention(session, &ctx.tx, &intervention).await;
             return pingora::proxy::FailToProxy {
                 error_code: intervention.status_code,
                 can_reuse_downstream: false,
@@ -378,7 +449,10 @@ impl ProxyHttp for ReverseProxyHandler {
             },
         };
         if code > 0 {
-            let _ = session.respond_error(code).await;
+            let waf = ctx.tx.waf_arc();
+            let id = ctx.tx.id().to_string();
+            let ip = ctx.tx.request().and_then(|r| r.client_ip);
+            send_error_page(session, &waf, code, PageKind::for_status(code), &id, ip).await;
         }
         pingora::proxy::FailToProxy {
             error_code: code,

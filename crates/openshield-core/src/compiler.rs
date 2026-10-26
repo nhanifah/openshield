@@ -99,16 +99,8 @@ pub fn compile(
 pub const GEO_RULE_PREFIX: &str = "geo:";
 
 fn geo_rule_config(g: &config::GeoRule) -> config::RuleConfig {
-    let response = (g.action == config::Action::Block).then(|| config::ActionParameters {
-        response: Some(config::BlockResponse {
-            status_code: 403,
-            content_type: Some("text/plain; charset=utf-8".into()),
-            content: Some("Access from your network or location is not allowed.\n".into()),
-        }),
-        scores: Vec::new(),
-        id: None,
-        overrides: None,
-    });
+    // No body: the host renders the "geo" error page (rule id prefix `geo:`).
+    let response = None;
     config::RuleConfig {
         id: format!("{GEO_RULE_PREFIX}{}", g.id),
         description: g.description.clone(),

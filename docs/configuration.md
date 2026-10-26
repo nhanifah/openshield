@@ -103,6 +103,32 @@ geo_access:
 
 Requests whose location is unknown (private addresses, or no database) are never matched, also in `allow_only` mode. Each rule becomes a WAF rule `geo:<id>`; in rule expressions the same data is available as `ip.src.country`, `ip.src.region_code`, `ip.src.region`, `ip.src.asnum`, `ip.src.has_country`, `ip.src.has_asnum` and `ip.src.allowlisted`. In the dashboard, rules are edited under Controls; each change is a policy version (audited, reversible, and subject to second-admin approval when that is on), and the dialog estimates how much of the last 24 hours of traffic the rule would have matched.
 
+## Error pages
+
+When the proxy answers instead of the site (a block, a geo or network block, a rate limit, a request that is too large, a bad request, or the site behind it being down), it sends one built-in page: the status, a title and message, the request ID, the visitor's IP and the time, in English or Indonesian, light or dark, with no scripts and no external requests. Browsers get HTML, clients that ask for JSON get `{"error", "message", "status", "request_id"}`, and other clients get plain text. The Turnstile challenge uses the same layout.
+
+```yaml
+error_pages:
+  language: id                 # en (default) or id
+  site_name: KartuKenangan
+  support_email: halo@example.com
+  support_url: https://example.com/help
+  accent_color: "#be185d"
+  show_request_id: true        # default
+  show_client_ip: true         # default
+  show_powered_by: false       # default
+  pages:                       # optional, per page: blocked, geo, rate_limited, too_large,
+    geo:                       # bad_request, unavailable, error, challenge
+      title: Hanya untuk pengunjung dari Indonesia
+      message: Hubungi kami jika Anda membutuhkan akses.
+    unavailable:
+      html: |                  # a whole document; {{status}} {{status_text}} {{title}} {{message}}
+        <!DOCTYPE html>        # {{request_id}} {{client_ip}} {{time}} {{site_name}} {{support_email}}
+        <h1>{{title}}</h1>     # {{support_url}}; the challenge page also needs {{challenge_widget}}
+```
+
+Placeholder values are HTML-escaped, and pages are served with a Content-Security-Policy that blocks scripts, so a template cannot run code in visitors' browsers. A rule that sets its own `action_parameters.response.content` still sends exactly that body. In the dashboard, error pages are edited under Settings, Error pages, with a preview; each change is a policy version.
+
 ## Logs and metrics
 
 These are the default log settings:

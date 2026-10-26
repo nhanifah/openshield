@@ -9,6 +9,7 @@
 pub mod challenge;
 pub mod compiler;
 pub mod config;
+pub mod error_page;
 pub mod firewall;
 pub mod geoip;
 pub mod logging;

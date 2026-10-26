@@ -163,6 +163,7 @@ impl Intel {
                 vault_source: vault.source.clone(),
                 passkeys: Default::default(),
                 geo: Arc::clone(&geo),
+                previews: Default::default(),
             });
             let listen = admin_cfg.listen.clone();
             // Bind now so a bad address fails startup instead of logging later.

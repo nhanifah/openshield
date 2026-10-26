@@ -39,14 +39,15 @@ impl VerificationForm {
 }
 
 impl ChallengeManager {
-    pub fn new(config: &ChallengeConfig) -> Self {
+    /// `pages` styles the default page; a `custom_page` file replaces it.
+    pub fn new(config: &ChallengeConfig, pages: &crate::error_page::ErrorPagesConfig) -> Self {
         let challenge_page = if let Some(ref path) = config.custom_page {
             let html = std::fs::read_to_string(path)
                 .unwrap_or_else(|e| panic!("Failed to read challenge page {:?}: {}", path, e));
             html.replace("{{turnstile_site_key}}", &config.turnstile_site_key)
                 .replace("{{challenge_path}}", &config.challenge_path)
         } else {
-            default_challenge_page(&config.turnstile_site_key, &config.challenge_path)
+            pages.challenge_html(&config.turnstile_site_key, &config.challenge_path)
         };
 
         let client = reqwest::Client::builder()
@@ -257,58 +258,6 @@ fn extract_cookie<'a>(cookie_header: &'a str, name: &str) -> Option<&'a str> {
         }
     }
     None
-}
-
-fn default_challenge_page(site_key: &str, challenge_path: &str) -> String {
-    format!(
-        r#"<!DOCTYPE html>
-<html>
-<head>
-    <title>Security Check</title>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-    <style>
-        body {{
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-            min-height: 100vh;
-            margin: 0;
-            background: #f5f5f5;
-            color: #333;
-        }}
-        .container {{
-            text-align: center;
-            padding: 2rem;
-            background: white;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }}
-        h1 {{ font-size: 1.5rem; margin-bottom: 1rem; }}
-        p {{ color: #666; margin-bottom: 1.5rem; }}
-        .cf-turnstile {{ display: inline-block; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Security Check</h1>
-        <p>Please verify you are human to continue.</p>
-        <form method="POST" action="{challenge_path}">
-            <div class="cf-turnstile" data-sitekey="{site_key}" data-callback="onSuccess"></div>
-            <input type="hidden" name="redirect" id="redirect">
-        </form>
-    </div>
-    <script>
-        document.getElementById('redirect').value = window.location.href;
-        function onSuccess(token) {{
-            document.querySelector('form').submit();
-        }}
-    </script>
-</body>
-</html>"#
-    )
 }
 
 #[cfg(test)]

@@ -2347,7 +2347,7 @@
 
   VIEWS.settings = function (root, params, ctx) {
     if (!can('admin')) { root.append(pageHead('Settings'), stateBox('locked', 'Settings are for admins only.')); return; }
-    const TABS = [['ai', 'AI'], ['challenge', 'Challenge'], ['users', 'Users & tokens'], ['storage', 'Event storage'], ['geo', 'Geo data'], ['security', 'Security']];
+    const TABS = [['ai', 'AI'], ['challenge', 'Challenge'], ['users', 'Users & tokens'], ['storage', 'Event storage'], ['geo', 'Geo data'], ['pages', 'Error pages'], ['security', 'Security']];
     let tab = params.get('tab') || (S.me && S.me.setup_mode ? 'users' : 'ai');
     if (!TABS.some((t) => t[0] === tab)) tab = 'ai';
     const body = h('div', { class: 'settings-body' });
@@ -2366,7 +2366,7 @@
     }
     function render() {
       if (!data) return;
-      const fn = { ai: aiCard, challenge: challengeCard, users: usersCard, storage: storageCard, geo: geoCard, security: () => h('div', { class: 'stack' }, securityCard(), passkeyCard()) }[tab];
+      const fn = { ai: aiCard, challenge: challengeCard, users: usersCard, storage: storageCard, geo: geoCard, pages: pagesCard, security: () => h('div', { class: 'stack' }, securityCard(), passkeyCard()) }[tab];
       body.replaceChildren(fn());
     }
 
@@ -2624,6 +2624,109 @@
       c.body.append(state, form,
         h('p', { class: 'hint spaced', text: 'Lookups are local: no address leaves the server. Works with DB-IP Lite (CC BY 4.0, "IP geolocation by DB-IP") or MaxMind GeoLite2 files kept current with geoipupdate. Files are re-read within a minute of changing; replace them by renaming a finished file over the old one.' }));
       state.appendChild(stateBox('loading', 'Loading…'));
+      load();
+      return c.el;
+    }
+
+    function pagesCard() {
+      const KIND_LABELS = { blocked: 'Blocked (403)', geo: 'Geo or network block (403)', rate_limited: 'Rate limited (429)', too_large: 'Too large (413, 431)',
+        bad_request: 'Bad request (400)', unavailable: 'Site unavailable (502–504)', error: 'Other error (500)', challenge: 'Challenge (Turnstile)' };
+      const c = card('Error pages', { sub: 'what visitors see instead of the site' });
+      const wrap = h('div', { class: 'pages-layout' });
+      c.body.appendChild(wrap);
+      wrap.appendChild(stateBox('loading', 'Loading…'));
+      let cfg = null, defaults = {}, kind = 'blocked', timer = 0, seq = 0;
+      const frame = h('iframe', { class: 'page-preview', title: 'Preview of the selected error page', sandbox: '', referrerpolicy: 'no-referrer' });
+      const previewNote = h('p', { class: 'hint', text: 'Preview with sample values. Browsers that ask for JSON get JSON; other non-browser clients get plain text.' });
+      const openTab = h('a', { class: 'btn btn-sm', href: '#', target: '_blank', rel: 'noopener', text: 'Open in new tab' });
+      function schedule() { clearTimeout(timer); timer = setTimeout(preview, 300); }
+      async function preview() {
+        const n = ++seq;
+        try {
+          const r = await api('/api/error-pages/preview', { method: 'POST', body: { config: cfg, kind } });
+          if (n === seq) { frame.src = r.url; openTab.href = r.url; }
+        } catch (e) { if (n === seq && e.status !== 401) previewNote.textContent = 'Preview failed: ' + e.message; }
+      }
+      async function load() {
+        let d;
+        try { d = await api('/api/error-pages'); } catch (e) { if (e.status !== 401) wrap.replaceChildren(stateBox('error', e.message)); return; }
+        cfg = Object.assign({ pages: {} }, d.config);
+        cfg.pages = cfg.pages || {};
+        defaults = d.defaults || {};
+        render(d);
+      }
+      function render(d) {
+        const admin = d.can_edit;
+        const lang = select([['en', 'English'], ['id', 'Bahasa Indonesia']], cfg.language || 'en');
+        const site = h('input', { type: 'text', value: str(cfg.site_name), maxLength: 80, placeholder: 'KartuKenangan' });
+        const email = h('input', { type: 'text', value: str(cfg.support_email), maxLength: 254, placeholder: 'halo@example.com', autocomplete: 'off' });
+        const url = h('input', { type: 'text', value: str(cfg.support_url), maxLength: 500, placeholder: 'https://example.com/help', autocomplete: 'off' });
+        const accent = h('input', { type: 'color', value: cfg.accent_color || '#2563eb', 'aria-label': 'Accent colour' });
+        const showId = checkbox('Show the request ID', cfg.show_request_id !== false, 'Lets visitors quote it to support; you can find the event by it.');
+        const showIp = checkbox("Show the visitor's IP address", cfg.show_client_ip !== false);
+        const powered = checkbox('Show "Protected by OpenShield"', !!cfg.show_powered_by);
+        const kindSel = select(Object.keys(KIND_LABELS).map((k) => [k, KIND_LABELS[k]]), kind);
+        const title = h('input', { type: 'text', maxLength: 120 });
+        const msg = h('textarea', { rows: 3, maxLength: 600 });
+        const html = h('textarea', { rows: 8, spellcheck: false, class: 'mono-area', placeholder: '<!DOCTYPE html>…' });
+        const htmlHint = h('p', { class: 'hint' });
+        const custom = h('details', { class: 'custom-html' }, h('summary', { text: 'Custom HTML for this page (advanced)' }), html, htmlHint);
+        function fillPage() {
+          const p = cfg.pages[kind] || {};
+          const def = (defaults[lang.value] || {})[kind] || {};
+          title.value = str(p.title); title.placeholder = str(def.title);
+          msg.value = str(p.message); msg.placeholder = str(def.message);
+          html.value = str(p.html);
+          custom.open = !!p.html;
+          htmlHint.textContent = 'A whole HTML document. Placeholders, all HTML-escaped: ' + d.placeholders.map((x) => '{{' + x + '}}').join(' ')
+            + (kind === 'challenge' ? ' and {{challenge_widget}} (required: the Turnstile check).' : '.') + ' Scripts never run: the page is served with a CSP that blocks them.';
+        }
+        function setPage(field, v) {
+          const p = Object.assign({}, cfg.pages[kind] || {});
+          if (v.trim()) p[field] = v; else delete p[field];
+          if (Object.keys(p).length) cfg.pages[kind] = p; else delete cfg.pages[kind];
+          schedule();
+        }
+        const opt = (v) => (v.trim() ? v.trim() : undefined);
+        lang.addEventListener('change', () => { cfg.language = lang.value; fillPage(); schedule(); });
+        site.addEventListener('input', () => { cfg.site_name = opt(site.value); schedule(); });
+        email.addEventListener('input', () => { cfg.support_email = opt(email.value); schedule(); });
+        url.addEventListener('input', () => { cfg.support_url = opt(url.value); schedule(); });
+        accent.addEventListener('input', () => { cfg.accent_color = accent.value === '#2563eb' ? undefined : accent.value; schedule(); });
+        showId.box.addEventListener('change', () => { cfg.show_request_id = showId.box.checked; schedule(); });
+        showIp.box.addEventListener('change', () => { cfg.show_client_ip = showIp.box.checked; schedule(); });
+        powered.box.addEventListener('change', () => { cfg.show_powered_by = powered.box.checked; schedule(); });
+        kindSel.addEventListener('change', () => { kind = kindSel.value; fillPage(); preview(); });
+        title.addEventListener('input', () => setPage('title', title.value));
+        msg.addEventListener('input', () => setPage('message', msg.value));
+        html.addEventListener('input', () => setPage('html', html.value));
+        const save = h('button', { type: 'submit', class: 'btn btn-primary', text: 'Save' });
+        const reset = h('button', { type: 'button', class: 'btn', text: 'Back to defaults' });
+        const form = h('form', { class: 'settings-form', 'aria-label': 'Error pages' },
+          h('div', { class: 'grid grid-2' }, field('Language', lang), field('Site name', site, 'Shown above the message and in the tab title.')),
+          h('div', { class: 'grid grid-2' }, field('Support email', email), field('Support page', url)),
+          h('div', { class: 'row accent-row' }, field('Accent colour', accent), h('div', { class: 'stack' }, showId.el, showIp.el, powered.el)),
+          h('h3', { class: 'sub-head', text: 'Page text' }),
+          field('Page', kindSel),
+          field('Title', title, 'Empty: the default shown in grey.'),
+          field('Message', msg),
+          custom,
+          admin ? h('div', { class: 'row form-actions' }, save, reset) : roleNote('admin', 'Changing error pages'));
+        for (const el of form.querySelectorAll('input, select, textarea')) el.disabled = !admin && el !== kindSel;
+        form.addEventListener('submit', (e) => {
+          e.preventDefault();
+          act(save, async () => {
+            const r = await api('/api/error-pages', { method: 'PUT', body: cfg });
+            if (r.status === 'pending') toast('Saved as change #' + str(r.change_id) + '; a second admin must approve it under Policy.', 'warn', 8000);
+            else if (r.status === 'applied') toast('Error pages applied as policy version ' + str(r.version) + '.', 'ok');
+            else toast('No change.', 'ok');
+          });
+        });
+        reset.addEventListener('click', () => { cfg = { pages: {} }; render(d); toast('Defaults restored in the form. Save to apply them.', 'ok'); });
+        fillPage();
+        wrap.replaceChildren(form, h('div', { class: 'preview-pane' }, h('div', { class: 'row preview-head' }, h('strong', { text: 'Preview' }), openTab), frame, previewNote));
+        preview();
+      }
       load();
       return c.el;
     }

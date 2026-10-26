@@ -239,6 +239,15 @@ Config-file users cannot be changed through these endpoints. Revoking a user als
 
 Events carry `country`, `region` (`ID-JK` or `ID:Jakarta`), `asn`, `as_org` and `private_ip`; the event detail adds `location` (country, region and city names). `GET /api/events` filters by `country`, `region` and `asn` (`13335` or `AS13335`). The overview adds `top_countries`, `top_regions` and `top_asns` with request and blocked counts.
 
+### Error pages
+
+| Method | Path | Role | Notes |
+| --- | --- | --- | --- |
+| GET | `/api/error-pages` | any | The `error_pages` settings, the default texts per language and page, and the placeholders |
+| PUT | `/api/error-pages` | admin | The whole `error_pages` object; a new policy version (or a pending change). `{}` restores the defaults |
+| POST | `/api/error-pages/preview` | admin | `{"config", "kind"}` renders a draft; returns `{"url": "/preview/<id>"}` |
+| GET | `/preview/{id}` | none | The draft page, for 2 minutes, framable only by the dashboard and with scripts blocked |
+
 ### Passkeys
 
 | Method | Path | Auth | Notes |

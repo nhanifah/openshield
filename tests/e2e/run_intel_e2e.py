@@ -764,6 +764,59 @@ def t_geo(ctx):
         api("DELETE", "/api/settings/geo", "alice")
 
 
+@test("I29", "Error pages: HTML, JSON or text by Accept; branding, language and geo page; preview is short-lived and framed only by the dashboard", "medium")
+def t_error_pages(ctx):
+    ip = "198.51.100.77"
+    html_h = {"Accept": "text/html,application/xhtml+xml,*/*;q=0.8"}
+    try:
+        api("POST", "/api/controls/ip-block", "alice", {"value": ip, "reason": "e2e error page", "ttl_s": 600})
+        page = as_client(ip, "GET", "/echo/page", html_h)
+        rid = page.header("x-request-id") or ""
+        html_ok = (page.status == 403 and "text/html" in (page.header("content-type") or "")
+                   and "script-src" not in (page.header("content-security-policy") or "x") and "default-src 'none'" in (page.header("content-security-policy") or "")
+                   and b"Access denied" in page.body and rid.encode() in page.body and ip.encode() in page.body)
+        js = as_client(ip, "GET", "/echo/page", {"Accept": "application/json"})
+        jv = json.loads(js.body or b"{}")
+        json_ok = js.status == 403 and jv.get("status") == 403 and jv.get("request_id") == js.header("x-request-id")
+        txt = as_client(ip, "GET", "/echo/page")
+        text_ok = txt.status == 403 and txt.body.startswith(b"403 Forbidden")
+
+        bad, _, _ = api("PUT", "/api/error-pages", "alice", {"accent_color": "red; x"})
+        viewer, _, _ = api("PUT", "/api/error-pages", "val", {"language": "id"})
+        st, r, _ = api("PUT", "/api/error-pages", "alice", {"language": "id", "site_name": "Toko <Uji>", "support_email": "halo@example.com",
+                                                            "pages": {"blocked": {"title": "Diblokir sementara"}}})
+        branded = as_client(ip, "GET", "/echo/page", html_h)
+        brand_ok = (st == 200 and r.get("status") == "applied" and b"Diblokir sementara" in branded.body
+                    and b"Toko &lt;Uji&gt;" in branded.body and b'lang="id"' in branded.body and b"mailto:halo@example.com" in branded.body)
+
+        set_geo_rules([{"id": "no-cn-page", "action": "block", "countries": ["CN"]}])
+        geo = as_client("198.51.100.78", "GET", "/echo/geo-page", html_h)
+        geo_ok = geo.status == 403 and b"Tidak tersedia di wilayah Anda" in geo.body
+        big = as_client("203.0.113.79", "GET", "/echo/big", {**html_h, "X-Big": "a" * 70000})
+        big_ok = big.status == 431 and b"Permintaan terlalu besar" in big.body
+
+        _, pv, _ = api("POST", "/api/error-pages/preview", "alice", {"config": {"site_name": "Preview Co"}, "kind": "unavailable"})
+        purl = pv.get("url", "")
+        with urllib.request.urlopen(ADMIN + purl, timeout=5) as resp:
+            pbody, pcsp, pxfo = resp.read(), resp.headers.get("Content-Security-Policy", ""), resp.headers.get("X-Frame-Options", "")
+        try:
+            urllib.request.urlopen(ADMIN + "/preview/" + "0" * 32, timeout=5)
+            missing = 200
+        except urllib.error.HTTPError as e:
+            missing = e.code
+        preview_ok = (purl.startswith("/preview/") and b"Preview Co" in pbody and b"Temporarily unavailable" in pbody
+                      and "frame-ancestors 'self'" in pcsp and "script-src" not in pcsp and pxfo == "SAMEORIGIN" and missing == 404)
+        _, aud, _ = api("GET", "/api/audit?limit=60", "alice")
+        audited = any(e.get("action") == "error_pages" for e in aud.get("entries", []))
+        ok = html_ok and json_ok and text_ok and bad == 400 and viewer == 403 and brand_ok and geo_ok and big_ok and preview_ok and audited
+        return ok, (f"html={html_ok} json={json_ok} text={text_ok} bad_accent={bad} viewer_put={viewer} branded={brand_ok} "
+                    f"geo_page={geo_ok} header_431={big.status}/{big_ok} preview={preview_ok} missing_preview={missing} audited={audited}")
+    finally:
+        api("DELETE", f"/api/controls/ip-block/{ip}", "alice")
+        set_geo_rules([])
+        api("PUT", "/api/error-pages", "alice", {})
+
+
 @test("I21", "Failed admin logins are rate limited", "medium")
 def t_login_ratelimit(ctx):
     codes = [api("GET", "/api/me", token=f"guess-{i}")[0] for i in range(12)]

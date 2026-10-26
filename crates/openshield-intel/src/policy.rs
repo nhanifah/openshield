@@ -37,6 +37,7 @@ pub const WAF_KEYS: &[&str] = &[
     "scores",
     "lists",
     "challenge",
+    "error_pages",
     "token_configurations",
     "schemas",
     "rulesets",
