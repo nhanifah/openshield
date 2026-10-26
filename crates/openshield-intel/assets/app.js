@@ -20,14 +20,14 @@
   let uidN = 0;
   const uid = (p) => (p || 'f') + '-' + (++uidN);
 
-  // ------------------------------------------------------------------ storage (may throw in private modes)
+  // ---- storage (may throw in private modes)
   const store = {
     get(area, k) { try { return window[area].getItem(k); } catch (e) { return null; } },
     set(area, k, v) { try { window[area].setItem(k, v); } catch (e) { /* ignore */ } },
     del(area, k) { try { window[area].removeItem(k); } catch (e) { /* ignore */ } },
   };
 
-  // ------------------------------------------------------------------ DOM helpers
+  // ---- DOM helpers
   function h(tag, props) {
     const el = document.createElement(tag);
     if (props) setProps(el, props);
@@ -62,7 +62,7 @@
   }
   function cvar(el, color) { el.style.setProperty('--c', color); return el; }
 
-  // ------------------------------------------------------------------ formatting
+  // ---- formatting
   function compact(n) {
     if (n === null || n === undefined || n === '' || !isFinite(n)) return '–';
     n = Number(n);
@@ -99,7 +99,7 @@
   function validTs(ts) { return ts !== null && ts !== undefined && isFinite(ts) && Number(ts) > 0; }
   function absTime(ts) {
     if (!validTs(ts)) return 'unknown time';
-    return new Date(Number(ts)).toLocaleString(undefined, { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    return new Date(Number(ts)).toLocaleString(undefined, { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
   }
   function clock(ts) {
     if (!validTs(ts)) return '—';
@@ -140,7 +140,7 @@
   function str(v) { return v === null || v === undefined ? '' : String(v); }
   function shortId(id) { const s = str(id); return s.length > 13 ? s.slice(0, 8) + '…' : s; }
 
-  // ------------------------------------------------------------------ badges
+  // ---- badges
   function actionBadge(a) {
     const k = ACTIONS.indexOf(a) >= 0 || a === 'suspicious' ? a : 'unknown';
     return h('span', { class: 'badge act-' + k, text: a == null || a === '' ? 'unknown' : String(a) });
@@ -190,9 +190,11 @@
     return h('span', { class: 'meter' }, meter(x, c), anomalyText(x));
   }
 
-  // ------------------------------------------------------------------ small UI pieces
-  let alertToast = null, alertToastN = 0, alertToastTimer = 0;
+  // ---- small UI pieces
+  let alertToast = null, alertToastN = 0, alertToastTimer = 0, alertQuiet = 0;
+  // 6s, then a quiet minute (the badge still counts); never on Alerts.
   function alertToastShow(text) {
+    if (Date.now() < alertQuiet || parseHash().name === 'alerts') return;
     const box = $('toasts');
     alertToastN++;
     if (!alertToast || !alertToast.isConnected) {
@@ -202,8 +204,7 @@
     }
     alertToast.replaceChildren(h('span', { text: alertToastN === 1 ? text : alertToastN + ' new high-severity alerts' }), ' ',
       h('a', { href: '#/alerts', text: 'View alerts' }));
-    clearTimeout(alertToastTimer);
-    alertToastTimer = setTimeout(() => { if (alertToast) alertToast.remove(); alertToast = null; alertToastN = 0; }, 6000);
+    if (!alertToastTimer) alertToastTimer = setTimeout(() => { if (alertToast) alertToast.remove(); alertToast = null; alertToastN = 0; alertToastTimer = 0; alertQuiet = Date.now() + 60000; }, 6000);
   }
   function toast(msg, kind, ms) {
     const box = $('toasts');
@@ -213,6 +214,12 @@
     setTimeout(() => t.remove(), ms || (kind === 'error' ? 7000 : 4500));
   }
   function stateBox(kind, msg) {
+    // Skeleton rows; 'progress' (a long user action) keeps a spinner and text.
+    if (kind === 'loading') {
+      return h('div', { class: 'state-loading', role: 'status', 'aria-busy': 'true' },
+        h('div', { class: 'sk-rows', 'aria-hidden': 'true' }, [0, 1, 2].map(() => h('div', { class: 'skeleton' }))), h('span', { class: 'sr-only', text: msg }));
+    }
+    if (kind === 'progress') kind = 'loading';
     const kids = kind === 'loading' ? h('div', { class: 'spinner', 'aria-hidden': 'true' }) : kind === 'error' ? icon('close') : kind === 'locked' ? icon('lock') : null;
     return h('div', { class: 'state state-' + kind, role: kind === 'error' ? 'alert' : null, 'aria-busy': kind === 'loading' ? 'true' : null }, kids, h('p', { text: msg }));
   }
@@ -275,6 +282,7 @@
   }
   function tableRow(cols, r, opts) {
     const tr = h('tr');
+    if (opts.key) tr.dataset.key = String(opts.key(r));
     if (opts.onRow) {
       tr.className = 'clickable';
       tr.tabIndex = 0;
@@ -283,10 +291,29 @@
     }
     for (const c of cols) {
       const v = c.render ? c.render(r) : r[c.key];
-      tr.appendChild(h('td', { class: (c.num ? 'right num ' : '') + (c.cls || '') }, v instanceof Node ? v : (v === null || v === undefined || v === '' ? '—' : String(v))));
+      tr.appendChild(h('td', { class: (c.num ? 'right num ' : '') + (c.cls || '') }, v instanceof Node ? v : (v === null || v === undefined || v === '' ? (c.cls === 'actions' ? '' : '—') : String(v))));
     }
     return tr;
   }
+  // Re-rendered tables keep focus on the same row's control.
+  const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
+  function captureFocus(box) {
+    const a = document.activeElement;
+    if (!a || a === document.body || !box.contains(a)) return null;
+    const row = a.closest('[data-key], tr');
+    if (!row) return null;
+    const rows = [...box.querySelectorAll(row.matches('[data-key]') ? '[data-key]' : 'tr')];
+    return { key: row.dataset.key, pos: rows.indexOf(row), idx: a === row ? -1 : [...row.querySelectorAll(FOCUSABLE)].indexOf(a), keyed: row.matches('[data-key]') };
+  }
+  function restoreFocus(box, snap) {
+    if (!snap || (document.activeElement && document.activeElement !== document.body && !box.contains(document.activeElement))) return;
+    const rows = [...box.querySelectorAll(snap.keyed ? '[data-key]' : 'tr')];
+    const row = (snap.keyed && rows.find((r) => r.dataset.key === snap.key)) || rows[Math.min(snap.pos, rows.length - 1)];
+    const fs = row ? [...row.querySelectorAll(FOCUSABLE)] : [];
+    const target = snap.idx < 0 && row && row.tabIndex >= 0 ? row : fs[Math.max(0, Math.min(snap.idx, fs.length - 1))] || (box.closest('.card') || box).querySelector(FOCUSABLE) || $('view');
+    target.focus({ preventScroll: true });
+  }
+  function keepFocus(box, fn) { const snap = captureFocus(box); fn(); restoreFocus(box, snap); }
   function kv(pairs) {
     const dl = h('dl', { class: 'kv' });
     for (const [k, v] of pairs) {
@@ -331,11 +358,15 @@
   }
   function looksLikeIp(v) { return typeof v === 'string' && validIpOrCidr(v) && v.indexOf('/') < 0; }
 
-  // ------------------------------------------------------------------ API
+  // ---- API
+  const EXPIRED = 'Your session is no longer valid. Sign in again.', TOO_MANY = 'Too many failed attempts from this address. Wait a minute and try again.';
   class ApiError extends Error { constructor(status, msg) { super(msg); this.status = status; } }
   async function api(path, opts) {
     opts = opts || {};
-    const headers = { Authorization: 'Bearer ' + S.token, Accept: 'application/json' };
+    // Only a 401 for the current token ends the session.
+    const tok = S.token;
+    if (!tok) throw new ApiError(401, 'Signed out');
+    const headers = { Authorization: 'Bearer ' + tok, Accept: 'application/json' };
     let body;
     if (opts.body !== undefined) { headers['Content-Type'] = 'application/json'; body = JSON.stringify(opts.body); }
     let res;
@@ -345,7 +376,7 @@
       if (e && e.name === 'AbortError') throw e;
       throw new ApiError(0, 'Cannot reach the admin server.');
     }
-    if (res.status === 401) { logout('Your session is no longer valid. Sign in again.'); throw new ApiError(401, 'Unauthorized'); }
+    if (res.status === 401) { if (tok === S.token) logout(EXPIRED); throw new ApiError(401, 'Unauthorized'); }
     if (res.status === 429) { const m = 'Rate limited by the admin server. Wait a minute and retry.'; toast(m, 'warn'); throw new ApiError(429, m); }
     if (!res.ok) {
       let msg = '';
@@ -365,13 +396,16 @@
     return s ? '?' + s : '';
   }
   function can(role) { return !!S.me && (RANK[S.me.role] !== undefined ? RANK[S.me.role] : -1) >= RANK[role]; }
-  // Runs an API action, toggling the button and reporting errors. Resolves to the result or null.
+  // Runs an API action; errors become toasts. Busy = aria-disabled (keeps focus).
   async function act(btn, fn) {
-    if (btn) btn.disabled = true;
+    if (btn) {
+      if (btn.getAttribute('aria-disabled') === 'true') return null;
+      btn.setAttribute('aria-disabled', 'true'); btn.setAttribute('aria-busy', 'true');
+    }
     try { return await fn(); } catch (e) {
       if (e && e.status !== 401 && e.status !== 429 && e.name !== 'AbortError') toast(e.message || 'Action failed', 'error');
       return null;
-    } finally { if (btn && btn.isConnected) btn.disabled = false; }
+    } finally { if (btn) { btn.removeAttribute('aria-disabled'); btn.removeAttribute('aria-busy'); } }
   }
   function changeResult(r, what) {
     if (r && r.status === 'pending') {
@@ -382,7 +416,7 @@
     return 'applied';
   }
 
-  // ------------------------------------------------------------------ modal dialog
+  // ---- modal dialog
   // `action` runs on confirm; returning a string keeps the dialog open and shows it as an error.
   function modal(o) {
     return new Promise((resolve) => {
@@ -424,7 +458,9 @@
       cancelBtn.addEventListener('click', onCancel);
       dlg.addEventListener('cancel', onEsc);
       dlg.showModal();
-      const first = $('modal-body').querySelector('input:not([type=hidden]),select,textarea');
+      // Danger: never focus where one Enter confirms.
+      const fields = [...$('modal-body').querySelectorAll('input:not([type=hidden]):not([type=checkbox]):not([type=radio]),select,textarea')];
+      const first = o.danger ? fields.find((f) => f.matches('input,textarea') && !f.value) : fields[0];
       (first || (o.hideOk || o.danger ? cancelBtn : okBtn)).focus();
     });
   }
@@ -457,7 +493,7 @@
     return res;
   }
 
-  // ------------------------------------------------------------------ live stream (fetch + manual SSE parsing)
+  // ---- live stream (fetch + manual SSE parsing)
   const bus = { event: new Set(), stats: new Set(), alert: new Set(), ai: new Set() };
   const CAP = { event: 2000, stats: 900, alert: 200, ai: 2000 };
   let pend = { event: [], stats: [], alert: [], ai: [] };
@@ -506,8 +542,10 @@
     const kick = () => { clearTimeout(conn.watchdog); conn.watchdog = setTimeout(() => ctrl.abort(), 45000); };
     try {
       kick();
-      const res = await fetch('/api/stream', { headers: { Authorization: 'Bearer ' + S.token, Accept: 'text/event-stream' }, cache: 'no-store', credentials: 'omit', signal: ctrl.signal });
-      if (res.status === 401) { logout('Your session is no longer valid. Sign in again.'); return; }
+      const tok = S.token;
+      if (!tok) return;
+      const res = await fetch('/api/stream', { headers: { Authorization: 'Bearer ' + tok, Accept: 'text/event-stream' }, cache: 'no-store', credentials: 'omit', signal: ctrl.signal });
+      if (res.status === 401) { if (tok === S.token) logout(EXPIRED); return; }
       if (res.status === 429) conn.attempt = Math.max(conn.attempt, 5);
       if (!res.ok || !res.body) throw new Error('HTTP ' + res.status);
       setConn('live', 'Live');
@@ -597,7 +635,7 @@
     try { const r = await api('/api/rules'); $('detect-banner').hidden = !r.detection_only; } catch (e) { /* non-fatal */ }
   }
 
-  // ------------------------------------------------------------------ router
+  // ---- router
   const VIEWS = {};
   function parseHash() {
     const raw = location.hash.replace(/^#\/?/, '');
@@ -632,7 +670,7 @@
     for (const a of document.querySelectorAll('#sidenav a')) {
       if (a.dataset.view === name) a.setAttribute('aria-current', 'page'); else a.removeAttribute('aria-current');
     }
-    setNav(false);
+    setNav(false, 'view');
     document.title = TITLES[name] + ' · OpenShield';
     const root = $('view');
     root.replaceChildren();
@@ -644,14 +682,21 @@
       root.replaceChildren(stateBox('error', 'This view failed to render: ' + e.message));
     }
   }
-  function setNav(open) {
-    $('sidenav').classList.toggle('open', open);
+  // Phone menu: focus moves in on open, out on close.
+  function setNav(open, back) {
+    const nav = $('sidenav');
+    const overlay = getComputedStyle(nav).position === 'fixed';
+    const wasOpen = nav.classList.contains('open');
+    const inside = nav.contains(document.activeElement);
+    nav.classList.toggle('open', open);
+    if (overlay && open && !wasOpen) (nav.querySelector('a[aria-current="page"]') || nav.querySelector('a')).focus({ preventScroll: true });
+    if (overlay && !open && inside) (back === 'view' ? $('view') : $('nav-toggle')).focus({ preventScroll: true });
     $('nav-scrim').hidden = !open;
     $('nav-toggle').setAttribute('aria-expanded', String(open));
     $('nav-toggle').setAttribute('aria-label', open ? 'Close navigation' : 'Open navigation');
   }
 
-  // ------------------------------------------------------------------ traffic chart (canvas, stacked area)
+  // ---- traffic chart (canvas, stacked area)
   const SERIES = [['block', 'Block'], ['challenge', 'Challenge'], ['allow', 'Allow'], ['pass', 'Pass']];
   function niceStep(x) {
     if (!(x > 0)) return 1;
@@ -821,7 +866,7 @@
     };
   }
 
-  // ------------------------------------------------------------------ view: overview
+  // ---- view: overview
   VIEWS.overview = function (root, params, ctx) {
     let range = params.get('range') || store.get('localStorage', 'os-range') || '1h';
     if (RANGES.indexOf(range) < 0) range = '1h';
@@ -863,7 +908,8 @@
     const methods = card('Methods');
     const countries = card('Countries');
     const aiCard = card('AI analysis', { actions: h('a', { href: '#/ai', class: 'btn btn-sm', text: 'Details' }) });
-    root.appendChild(h('div', { class: 'grid tops-grid' }, ips.el, paths.el, rules.el));
+    const tops = h('div', { class: 'grid tops-grid' }, ips.el, paths.el, rules.el);
+    root.appendChild(tops);
     root.lastChild.style.marginTop = 'var(--gap)';
     root.appendChild(h('div', { class: 'grid grid-4' }, codes.el, methods.el, countries.el, aiCard.el));
     root.lastChild.style.marginTop = 'var(--gap)';
@@ -907,7 +953,7 @@
       const raise = (l) => { if (l === 'bad' || level === 'ok') level = l; };
       if (crit || high) {
         raise('bad');
-        items.push(['bad', (crit ? crit + ' critical' + (high ? ' and ' : '') : '') + (high ? high + ' high' : '') + ' alert' + (crit + high === 1 ? '' : 's') + ' open', '#/alerts']);
+        items.push(['bad', (crit ? crit + ' critical' + (high ? ' and ' : '') : '') + (high ? high + ' high' : '') + ' alert' + (crit + high === 1 ? '' : 's') + ' open' + (med + low ? ', ' + (med + low) + ' lower' : ''), '#/alerts']);
       } else if (med || low) {
         raise('warn');
         items.push(['warn', (med + low) + ' lower-severity alert' + (med + low === 1 ? '' : 's') + ' open', '#/alerts']);
@@ -937,6 +983,7 @@
       // Every top list shows the same number of rows, so the cards line up.
       const TOP = 10;
       const tipIps = Array.isArray(data.top_ips) ? data.top_ips.slice(0, TOP) : [];
+      keepFocus(tops, () => {
       ips.body.replaceChildren(tipIps.length ? table([
         { label: 'Client', render: (r) => filterLink(str(r.ip), { ip: r.ip }) },
         { label: 'Country', render: (r) => str(r.country) || '—' },
@@ -944,18 +991,19 @@
         { label: 'Blocked', num: true, render: (r) => compact(r.blocked) },
         { label: 'Anomaly', render: (r) => anomalyMeter(r.anomaly_score) },
         { label: '', cls: 'actions', render: (r) => can('operator') ? h('button', { type: 'button', class: 'btn btn-sm btn-danger', text: 'Block', 'aria-label': 'Block ' + str(r.ip), onclick: () => blockDialog(str(r.ip), 'High anomaly score from overview') }) : '' },
-      ], tipIps, { class: 'compact', caption: 'Top client IPs' }) : stateBox('empty', 'No clients in this range'));
+      ], tipIps, { class: 'compact', caption: 'Top client IPs', key: (r) => r.ip }) : stateBox('empty', 'No clients in this range'));
       const tp = Array.isArray(data.top_paths) ? data.top_paths.slice(0, TOP) : [];
       paths.body.replaceChildren(tp.length ? table([
         { label: 'Path', cls: 'cell-path', render: (r) => filterLink(str(r.path), { path: r.path }) },
         { label: 'Req', num: true, render: (r) => compact(r.count) },
         { label: 'Blocked', num: true, render: (r) => compact(r.blocked) },
-      ], tp, { class: 'compact' }) : stateBox('empty', 'No paths in this range'));
+      ], tp, { class: 'compact', key: (r) => r.path }) : stateBox('empty', 'No paths in this range'));
       const tr = Array.isArray(data.top_rules) ? data.top_rules.slice(0, TOP) : [];
       rules.body.replaceChildren(tr.length ? table([
         { label: 'Rule', cls: 'cell-path', render: (r) => filterLink(str(r.id), { rule: r.id }) },
         { label: 'Hits', num: true, render: (r) => compact(r.count) },
-      ], tr, { class: 'compact' }) : stateBox('empty', 'No rule matched in this range'));
+      ], tr, { class: 'compact', key: (r) => r.id }) : stateBox('empty', 'No rule matched in this range'));
+      });
       const codeColor = { '2xx': 'var(--c-pass)', '3xx': 'var(--c-allow)', '4xx': 'var(--c-challenge)', '5xx': 'var(--c-block)' };
       codes.body.replaceChildren(bars(objEntries(data.status_codes).map(([k, v]) => [k, v, codeColor[k]]), 'No responses yet'));
       methods.body.replaceChildren(bars(objEntries(data.methods).sort((a, b) => b[1] - a[1]).slice(0, 8), 'No requests yet'));
@@ -1000,7 +1048,7 @@
     load(true);
   };
 
-  // ------------------------------------------------------------------ view: live tail
+  // ---- view: live tail
   VIEWS.live = function (root, params, ctx) {
     const MAX = 500, PER_FLUSH = 120;
     let paused = false, buffered = [], rate = 0, seen = 0, skipped = 0;
@@ -1112,7 +1160,7 @@
     ctx.every(1000, () => { rateEl.textContent = compact(rate) + ' ev/s'; rate = 0; if (!paused) seen = 0; });
   };
 
-  // ------------------------------------------------------------------ view: events (virtualized)
+  // ---- view: events (virtualized)
   const FILTERS = ['action', 'ip', 'path', 'rule', 'q', 'min_anomaly', 'ai_category'];
   VIEWS.events = function (root, params, ctx) {
     const F = {};
@@ -1261,7 +1309,7 @@
     loadMore();
   };
 
-  // ------------------------------------------------------------------ event drawer
+  // ---- event drawer
   const drawer = { id: null, opener: null, seq: 0 };
   function openEvent(id, opener) {
     if (id === null || id === undefined || id === '') return;
@@ -1283,7 +1331,10 @@
     $('drawer-body').replaceChildren();
     const o = drawer.opener;
     drawer.opener = null;
-    if (o && o.isConnected && typeof o.focus === 'function') o.focus();
+    // Events re-renders rows: find the opener by index.
+    let back = o && o.isConnected ? o : null;
+    if (!back && o && o.dataset && o.dataset.idx !== undefined) back = document.querySelector('#view .vrow[data-idx="' + o.dataset.idx + '"]');
+    (back && typeof back.focus === 'function' ? back : $('view')).focus({ preventScroll: true });
   }
   async function loadDrawer() {
     const my = ++drawer.seq;
@@ -1386,7 +1437,7 @@
     const clientIp = str(cl.ip || ev.client_ip);
     cs.appendChild(kv([
       ['IP', clientIp], ['Country', str(ev.country) || '—'], ['First seen', timeEl(cl.first_seen)], ['Requests', full(cl.requests)],
-      ['Blocked', full(cl.blocked)], ['Anomaly', anomalyMeter(cl.anomaly_score)], ['Blocked now', cl.blocked_now ? stBadge('open', 'yes · dynamic block active') : 'no'],
+      ['Blocked', full(cl.blocked)], ['Anomaly', anomalyMeter(cl.anomaly_score)], ['Blocked now', cl.blocked_now ? h('span', { class: 'badge act-block', text: 'yes · dynamic block active' }) : 'no'],
     ]));
     const cb = h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn btn-sm', onclick: () => { closeDrawer(); go('events', { ip: clientIp }); } }, icon('filter'), 'Events from this IP'));
     cb.style.marginTop = '8px';
@@ -1474,7 +1525,7 @@
     }
   });
 
-  // ------------------------------------------------------------------ view: alerts
+  // ---- view: alerts
   VIEWS.alerts = function (root, params, ctx) {
     const STATUSES = [['open', 'Open'], ['ack', 'Acknowledged'], ['resolved', 'Resolved'], ['all', 'All']];
     let status = params.get('status') || 'open';
@@ -1482,21 +1533,23 @@
     let sev = 'all';
     const list = h('div');
     root.append(pageHead('Alerts',
-      segmented(STATUSES, status, (v) => { status = v; load(); }, 'Alert status'),
+      segmented(STATUSES, status, (v) => { status = v; load(true); }, 'Alert status'),
       segmented([['all', 'Any severity']].concat(SEVERITIES.map((s) => [s, s])), sev, (v) => { sev = v; render(); }, 'Severity')));
     const c = card('Alerts', { flush: true });
     c.body.appendChild(list);
     root.appendChild(c.el);
     if (!can('analyst')) { const n = roleNote('analyst', 'Acknowledging, resolving and AI summaries'); n.style.margin = '10px 0 0'; root.appendChild(n); }
     let alerts = null;
-    async function load() {
-      list.replaceChildren(stateBox('loading', 'Loading alerts…'));
+    async function load(reset) {
+      const snap = captureFocus(list);
+      if (reset || !alerts) list.replaceChildren(stateBox('loading', 'Loading alerts…'));
       try {
         const r = await api('/api/alerts' + qs({ status: status === 'all' ? '' : status }));
         if (!ctx.alive) return;
         alerts = Array.isArray(r.alerts) ? r.alerts : [];
         if (status === 'open') { S.alertsOpen = alerts.length; renderAlertCount(); }
         render();
+        restoreFocus(list, snap);
       } catch (e) { if (ctx.alive && e.status !== 401) list.replaceChildren(stateBox('error', e.message)); }
     }
     const KIND = { rate_spike: 'Rate spike', scanning: 'Scanning', attack_burst: 'Attack burst', error_burst: 'Error burst',
@@ -1520,7 +1573,7 @@
       const rank = { critical: 3, high: 2, medium: 1, low: 0 };
       const rows = alerts.filter((a) => sev === 'all' || a.severity === sev)
         .sort((a, b) => (rank[b.severity] || 0) - (rank[a.severity] || 0) || (b.last_ts || b.ts || 0) - (a.last_ts || a.ts || 0));
-      if (!rows.length) { list.replaceChildren(stateBox('empty', status === 'open' ? 'No open alerts. All quiet.' : 'No alerts match.')); return; }
+      if (!rows.length) { list.replaceChildren(stateBox('empty', status === 'open' ? 'No open alerts. They appear when anomaly detection or AI analysis flags traffic.' : 'No alerts match these filters.')); return; }
       const cols = [
         { label: 'Severity', render: (a) => sevBadge(a.severity) },
         { label: 'Alert', cls: 'wrap', render: (a) => h('div', { class: 'alert-what' },
@@ -1533,16 +1586,18 @@
       ];
       const tbl = table(cols, [], { caption: 'Alerts' });
       const tbody = tbl.querySelector('tbody');
+      const opts = { key: (a) => a.id };
       for (const a of rows) {
-        const tr = tableRow(cols, a, {});
+        const tr = tableRow(cols, a, opts);
         if (a._fresh) { tr.classList.add('flash'); a._fresh = false; }
         tbody.appendChild(tr);
         if (a.summary) {
           tbody.appendChild(h('tr', null, h('td', { colSpan: cols.length },
-            h('div', { class: 'callout callout-ai' }, icon('bot'), h('div', null, h('strong', { text: 'AI summary (advisory) ' }), h('span', { class: 'verdict-text', text: str(a.summary) }))))));
+            h('div', { class: 'callout callout-ai' }, icon('bot'), h('div', null, h('strong', { text: 'AI summary (advisory) ' }), h('span', { class: 'verdict-text', text: str(a.summary) }),
+              h('div', { class: 'faint ai-meta', text: (a.summary_model ? 'Model ' + str(a.summary_model) + ' · ' : '') + 'free text, no confidence score · unreviewed' }))))));
         }
       }
-      list.replaceChildren(tbl);
+      keepFocus(list, () => list.replaceChildren(tbl));
     }
     function actions(a) {
       if (!can('analyst')) return '';
@@ -1551,7 +1606,7 @@
         const b = h('button', { type: 'button', class: 'btn btn-sm ' + (btnCls || ''), text: label, 'aria-label': label + ' alert ' + str(a.id) });
         b.addEventListener('click', () => act(b, async () => {
           const r = await api('/api/alerts/' + enc(a.id) + '/' + verb, { method: 'POST' });
-          if (verb === 'summarize') { a.summary = r && typeof r.summary === 'string' ? r.summary : '(empty summary)'; render(); return; }
+          if (verb === 'summarize') { a.summary = r && typeof r.summary === 'string' ? r.summary : '(empty summary)'; a.summary_model = r && r.model; render(); return; }
           toast('Alert ' + (verb === 'ack' ? 'acknowledged' : 'resolved') + '.', 'ok');
           refreshAlertCount();
           load();
@@ -1576,7 +1631,7 @@
     load();
   };
 
-  // ------------------------------------------------------------------ view: controls
+  // ---- view: controls
   VIEWS.controls = function (root, params, ctx) {
     const op = can('operator');
     root.append(pageHead('Controls'));
@@ -1610,7 +1665,7 @@
     function renderList(c, items, kind) {
       const path = kind === 'allow' ? 'ip-allow' : 'ip-block';
       const body = [];
-      if (!items.length) body.push(stateBox('empty', kind === 'allow' ? 'No dynamic allows.' : 'No active dynamic blocks.'));
+      if (!items.length) body.push(stateBox('empty', kind === 'allow' ? 'No dynamic allows. An allowed address is exempt from dynamic blocks.' : 'No active dynamic blocks.' + (op ? ' Block a client here, from the Overview, or from an event.' : '')));
       else {
         body.push(table([
           { label: 'Value', render: (r) => looksLikeIp(r.value) ? filterLink(str(r.value), { ip: r.value }) : h('span', { class: 'mono', text: str(r.value) }) },
@@ -1634,9 +1689,9 @@
             });
             return b;
           } },
-        ], items, { class: 'compact' }));
+        ], items, { class: 'compact', key: (r) => r.value }));
       }
-      c.body.replaceChildren.apply(c.body, body);
+      keepFocus(c.body, () => c.body.replaceChildren.apply(c.body, body));
     }
     function tick() {
       const now = Date.now();
@@ -1669,7 +1724,7 @@
     load();
   };
 
-  // ------------------------------------------------------------------ view: policy
+  // ---- view: policy
   VIEWS.policy = function (root, params, ctx) {
     const admin = can('admin');
     const verPill = h('span', { class: 'badge plain', text: 'version …' });
@@ -1722,7 +1777,7 @@
     }
     bValidate.addEventListener('click', () => act(bValidate, validate));
     bSim.addEventListener('click', () => act(bSim, async () => {
-      showResult('Simulation', stateBox('loading', 'Replaying recent traffic against the candidate policy…'));
+      showResult('Simulation', stateBox('progress', 'Replaying recent traffic against the candidate policy…'));
       let r;
       try { r = await api('/api/policy/simulate', { method: 'POST', body: { yaml: editor.value } }); } catch (e) { showResult('Simulation', h('div', { class: 'callout callout-danger', role: 'alert' }, h('pre', { text: e.message }))); return; }
       const cur = r.current || {}, cand = r.candidate || {};
@@ -1869,7 +1924,7 @@
     loadAll(false);
   };
 
-  // ------------------------------------------------------------------ view: labels & datasets
+  // ---- view: labels & datasets
   VIEWS.labels = function (root, params, ctx) {
     root.append(pageHead('Labels & datasets'));
     if (!can('analyst')) { root.appendChild(stateBox('locked', 'Label review and datasets require the analyst role.')); return; }
@@ -1894,7 +1949,7 @@
     function renderQueue() {
       if (!labels) return;
       const list = labels.filter((l) => source === 'all' || l.source === source);
-      if (!list.length) { queueCard.body.replaceChildren(stateBox('empty', status === 'candidate' ? 'Nothing waiting for review.' : 'No labels with this status.')); return; }
+      if (!list.length) { queueCard.body.replaceChildren(stateBox('empty', status === 'candidate' ? 'Nothing waiting for review. AI analysis suggests labels here; anyone can also label an event from its details.' : 'No labels with this status.')); return; }
       queueCard.body.replaceChildren(table([
         { label: 'Label', render: (l) => labelBadge(l.label) },
         { label: 'Source', render: (l) => sourceBadge(l.source) },
@@ -1987,7 +2042,7 @@
     loadDatasets();
   };
 
-  // ------------------------------------------------------------------ view: AI
+  // ---- view: AI
   VIEWS.ai = function (root, params, ctx) {
     const refresh = h('button', { type: 'button', class: 'btn btn-icon', 'aria-label': 'Refresh AI status', onclick: () => load() }, icon('refresh'));
     root.append(pageHead('AI analysis', refresh));
@@ -2013,10 +2068,11 @@
         const q = Number(s.queue) || 0, qc = Number(s.queue_capacity) || 0;
         const b = s.budget || {}, lat = s.latency_ms || {};
         const used = ratio(b.calls_today, b.max_calls_per_day);
-        const nodes = [h('div', { class: 'callout ' + cls, role: 'status' }, h('span', { class: 'row' }, stBadge(st), h('span', { text: text })))];
+        const nodes = [h('div', { class: 'callout ' + cls, role: 'status' }, h('span', { class: 'row' }, st === 'open' ? stBadge('failed', 'breaker open') : stBadge(st), h('span', { text: text })))];
         if (st !== 'disabled' || s.provider) {
-          nodes.push(h('div', { class: 'stats' },
-            stat('Provider', str(s.provider) || '—'), stat('Model', str(s.model) || '—'), stat('Breaker', st),
+          // 12 tiles (breaker state is in the callout): 6/4/3/2 per row.
+          nodes.push(h('div', { class: 'stats stats-12' },
+            stat('Provider', str(s.provider) || '—'), stat('Model', str(s.model) || '—'),
             stat('Queue', full(q) + (qc ? ' / ' + full(qc) : ''), qc ? meter(q / qc, q / qc > 0.8 ? 'var(--c-block)' : 'var(--c-allow)') : null),
             stat('Analyzed', compact(s.analyzed), null, full(s.analyzed)), stat('Failures', compact(s.failures)),
             stat('Invalid outputs', compact(s.invalid_outputs), null, 'Model responses that failed schema validation and were discarded'),
@@ -2034,7 +2090,7 @@
     load();
   };
 
-  // ------------------------------------------------------------------ view: audit
+  // ---- view: audit
   VIEWS.audit = function (root, params, ctx) {
     if (!can('admin')) { root.append(pageHead('Audit'), stateBox('locked', 'The admin audit log is visible to admins only.')); return; }
     let limit = 200;
@@ -2057,7 +2113,7 @@
         { label: 'Result', render: (e) => stBadge(/^(ok|applied|approved|success)$/.test(str(e.result)) ? 'ok' : e.result === 'pending' ? 'pending' : 'error', str(e.result) || '?') },
         { label: 'IP', cls: 'mono', render: (e) => str(e.ip) || '—' },
         { label: 'Detail', cls: 'mono wrap', render: (e) => detailText(e.detail) },
-      ], list, { class: 'compact', caption: 'Audit log' }) : stateBox('empty', entries.length ? 'No entry matches the filter.' : 'No audit entries yet.'));
+      ], list, { class: 'compact', caption: 'Audit log' }) : stateBox('empty', entries.length ? 'No entry matches the filter.' : 'No audit entries yet. Blocks, policy changes, settings and sign-ins are recorded here.'));
     }
     filter.addEventListener('input', render);
     async function load() {
@@ -2072,7 +2128,7 @@
     load();
   };
 
-  // ------------------------------------------------------------------ view: settings (admin)
+  // ---- view: settings (admin)
   // Secrets are write-only: the API only says whether one is set. Leaving a
   // secret field empty keeps the stored value.
   function checkbox(label, checked, hint) {
@@ -2112,6 +2168,7 @@
   }
 
   VIEWS.settings = function (root, params, ctx) {
+    if (!can('admin')) { root.append(pageHead('Settings'), stateBox('locked', 'Settings are for admins only.')); return; }
     const TABS = [['ai', 'AI'], ['challenge', 'Challenge'], ['users', 'Users & tokens'], ['storage', 'Event storage'], ['security', 'Security']];
     let tab = params.get('tab') || (S.me && S.me.setup_mode ? 'users' : 'ai');
     if (!TABS.some((t) => t[0] === tab)) tab = 'ai';
@@ -2386,7 +2443,7 @@
     load();
   };
 
-  // ------------------------------------------------------------------ theme
+  // ---- theme
   function effectiveTheme() {
     const t = document.documentElement.dataset.theme;
     if (t === 'light' || t === 'dark') return t;
@@ -2416,7 +2473,7 @@
   })();
   $('theme-toggle').addEventListener('click', () => setTheme(effectiveTheme() === 'dark' ? 'light' : 'dark'));
 
-  // ------------------------------------------------------------------ passkeys
+  // ---- passkeys
   const PK_OK = !!(window.PublicKeyCredential && navigator.credentials && navigator.credentials.create);
   function b64uToBuf(v) {
     let t = String(v).replace(/-/g, '+').replace(/_/g, '/');
@@ -2497,7 +2554,8 @@
         const d = await api('/api/passkeys');
         origins = d.origins || [];
         const here = origins.indexOf(location.origin) >= 0;
-        addBtn.disabled = !PK_OK || !here || !d.can_register;
+        addBtn.disabled = label.disabled = !PK_OK || !here || !d.can_register;
+        if (label.disabled && (document.activeElement === label || document.activeElement === document.body)) $('modal-cancel').focus();
         const notes = [];
         if (!d.can_register) notes.push(h('div', { class: 'callout callout-warn' }, icon('lock'), h('span', { text: 'The setup account cannot hold passkeys. Create your own user, sign in with it, then add one.' })));
         else if (!PK_OK) notes.push(h('div', { class: 'callout callout-warn' }, icon('lock'), h('span', { text: 'This browser does not support passkeys.' })));
@@ -2531,7 +2589,7 @@
     try {
       const r = await fetch('/api/auth/passkey/options', { method: 'POST', headers: { Accept: 'application/json' }, cache: 'no-store', credentials: 'omit' });
       const o = await r.json().catch(() => ({}));
-      if (!r.ok) throw new Error(r.status === 429 ? 'Too many failed attempts from this address. Wait a minute and try again.' : (o.error || 'Sign-in failed (HTTP ' + r.status + ').'));
+      if (!r.ok) throw new Error(r.status === 429 ? TOO_MANY : (o.error || 'Sign-in failed (HTTP ' + r.status + ').'));
       origins = o.origins || [];
       if (origins.indexOf(location.origin) < 0) throw new Error('Passkeys work only at ' + origins.join(' or ') + '. Open that address to sign in with one.');
       const cred = await navigator.credentials.get({ publicKey: { challenge: b64uToBuf(o.challenge), rpId: o.rpId, userVerification: 'required', timeout: o.timeout } });
@@ -2540,7 +2598,7 @@
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({ id: cred.id, client_data_json: bufToB64u(resp.clientDataJSON), authenticator_data: bufToB64u(resp.authenticatorData), signature: bufToB64u(resp.signature) }) });
       const j = await r2.json().catch(() => ({}));
-      if (!r2.ok) throw new Error(r2.status === 429 ? 'Too many failed attempts from this address. Wait a minute and try again.' : (j.error || 'Sign-in failed.'));
+      if (!r2.ok) throw new Error(r2.status === 429 ? TOO_MANY : (j.error || 'Sign-in failed.'));
       const v = await validateToken(j.token);
       if (v.error) throw new Error(v.error);
       S.token = j.token; S.me = v.me;
@@ -2549,7 +2607,7 @@
     } catch (e) { err.textContent = pkError(e, origins); } finally { btn.disabled = false; }
   }
 
-  // ------------------------------------------------------------------ auth / shell
+  // ---- auth / shell
   function showLogin(msg, info) {
     $('app').hidden = true;
     $('login').hidden = false;
@@ -2597,7 +2655,7 @@
     let res;
     try { res = await fetch('/api/me', { headers: { Authorization: 'Bearer ' + token, Accept: 'application/json' }, cache: 'no-store', credentials: 'omit' }); } catch (e) { return { error: 'Cannot reach the admin server.' }; }
     if (res.status === 401 || res.status === 403) return { error: 'That token was not accepted.' };
-    if (res.status === 429) return { error: 'Too many failed attempts from this address. Wait a minute and try again.' };
+    if (res.status === 429) return { error: TOO_MANY };
     if (!res.ok) return { error: 'Sign-in failed (HTTP ' + res.status + ').' };
     try {
       const me = await res.json();
@@ -2608,12 +2666,14 @@
   $('login-form').addEventListener('submit', async (e) => {
     e.preventDefault();
     const token = $('login-token').value.trim();
-    if (!token) { $('login-error').classList.remove('form-info'); $('login-error').textContent = 'Enter your admin token.'; return; }
+    const bad = (m) => { $('login-error').classList.remove('form-info'); $('login-error').textContent = m; $('login-token').setAttribute('aria-invalid', 'true'); };
+    if (!token) { bad('Enter your admin token.'); return; }
     $('login-submit').disabled = true;
     $('login-error').textContent = '';
     const r = await validateToken(token);
     $('login-submit').disabled = false;
-    if (r.error) { $('login-error').classList.remove('form-info'); $('login-error').textContent = r.error; $('login-token').select(); return; }
+    if (r.error) { bad(r.error); $('login-token').select(); return; }
+    $('login-token').removeAttribute('aria-invalid');
     S.token = token; S.me = r.me;
     store.set('sessionStorage', 'os-token', token);
     $('login-token').value = '';

@@ -11,8 +11,9 @@ Dev tokens are generated per run and written, with mode 0600, to the file
 given by --token-file (default: a temp file). The script prints only the
 file's path, never the tokens.
 
-Usage: python3 tests/dashboard/live_stack.py [--token-file PATH] [--rps 20]
-Dashboard: http://127.0.0.1:19190/
+Usage: python3 tests/dashboard/live_stack.py [--token-file PATH] [--rps 20] [--port-offset N]
+Dashboard: http://127.0.0.1:19190/ (plus N with --port-offset, so a second
+stack can run beside one that is already up)
 """
 
 import argparse
@@ -30,6 +31,13 @@ import time
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+# Every port the stack uses; --port-offset shifts all of them.
+PORTS = {"proxy": 18090, "upstream": 13000, "gemini": 13900, "metrics": 19092, "admin": 19190}
+OFFSET = 0
+
+
+def port(name):
+    return PORTS[name] + OFFSET
 BIN = ROOT / "target" / "release"
 CFG = ROOT / "tests" / "e2e" / "configs" / "e2e-intel.yaml"
 
@@ -53,7 +61,7 @@ def send(path, ip, method="GET", headers=None, body=b""):
         h["Content-Length"] = str(len(body))
     raw = f"{method} {path} HTTP/1.1\r\n".encode() + b"".join(f"{k}: {v}\r\n".encode() for k, v in h.items()) + b"\r\n" + body
     try:
-        with socket.create_connection(("127.0.0.1", 18090), timeout=3) as s:
+        with socket.create_connection(("127.0.0.1", port("proxy")), timeout=3) as s:
             s.sendall(raw)
             while s.recv(65536):
                 pass
@@ -101,7 +109,10 @@ def main():
                     help="first-run mode: no admin users, real Gemini endpoint, AI off until set in Settings; "
                          "data kept in --data-dir")
     ap.add_argument("--data-dir", default=str(ROOT / ".openshield-local"))
+    ap.add_argument("--port-offset", type=int, default=0, help="add N to every port the stack uses")
     args = ap.parse_args()
+    global OFFSET
+    OFFSET = args.port_offset
     tokens = {k: "dev-" + secrets.token_hex(16) for k in ("alice", "bob", "ana", "val")}
     tf = Path(args.token_file)
     tf.write_text(json.dumps(tokens))
@@ -110,8 +121,8 @@ def main():
     env = {**os.environ, "RUST_LOG": "openshield=warn,pingora=warn", "OS_E2E_GEMINI_KEY": "dev-key-" + secrets.token_hex(8),
            "OS_E2E_ADMIN": tokens["alice"], "OS_E2E_ADMIN2": tokens["bob"], "OS_E2E_ANALYST": tokens["ana"], "OS_E2E_VIEWER": tokens["val"]}
     procs = [
-        subprocess.Popen([str(BIN / "echo-upstream"), "127.0.0.1:13000"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL),
-        subprocess.Popen([str(BIN / "mock-gemini"), "127.0.0.1:13900"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL),
+        subprocess.Popen([str(BIN / "echo-upstream"), f"127.0.0.1:{port('upstream')}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL),
+        subprocess.Popen([str(BIN / "mock-gemini"), f"127.0.0.1:{port('gemini')}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL),
     ]
     if args.setup:
         data = Path(args.data_dir)
@@ -121,18 +132,20 @@ def main():
         logdir = data
     else:
         cfg_text = CFG.read_text().replace("__LOGDIR__", str(logdir))
+    for name, base in PORTS.items():
+        cfg_text = cfg_text.replace(f"127.0.0.1:{base}", f"127.0.0.1:{port(name)}")
     (logdir / "intel.yaml").write_text(cfg_text)
     procs.append(subprocess.Popen([str(BIN / "openshield"), "-c", str(logdir / "intel.yaml")], env=env,
                                   stdout=open(logdir / "proxy.log", "wb"), stderr=subprocess.STDOUT))
-    if not (wait_port(18090) and wait_port(19190)):
+    if not (wait_port(port("proxy")) and wait_port(port("admin"))):
         print("proxy failed to start; see", logdir / "proxy.log", flush=True)
         sys.exit(1)
     if args.setup:
         setup = Path(args.data_dir) / "openshield-setup-token"
         hint = f"first-run setup token in {setup}" if setup.exists() else "setup finished; sign in with your admin token"
-        print(f"Dashboard: http://127.0.0.1:19190/  ({hint})  data: {args.data_dir}", flush=True)
+        print(f"Dashboard: http://127.0.0.1:{port('admin')}/  ({hint})  data: {args.data_dir}", flush=True)
     else:
-        print(f"Dashboard: http://127.0.0.1:19190/  tokens: {tf}  logs: {logdir}", flush=True)
+        print(f"Dashboard: http://127.0.0.1:{port('admin')}/  tokens: {tf}  logs: {logdir}", flush=True)
     stop = threading.Event()
     th = threading.Thread(target=traffic, args=(args.rps, stop), daemon=True)
     th.start()
@@ -141,6 +154,12 @@ def main():
         stop.set()
         for p in procs:
             p.send_signal(signal.SIGTERM)
+        # The proxy drains connections on SIGTERM; don't leave it holding the ports.
+        for p in procs:
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                p.kill()
         sys.exit(0)
 
     signal.signal(signal.SIGTERM, shutdown)

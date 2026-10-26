@@ -96,10 +96,10 @@ The dashboard is an operational security console: operators open it to decide wh
 
 ### Visual check before shipping (mandatory)
 
-Every UI change is checked in the built-in browser against a running instance (`python3 tests/dashboard/live_stack.py`), not judged from the diff:
+Every UI change is checked in the built-in browser against a running instance (`python3 tests/dashboard/live_stack.py`; add `--port-offset 100` to run beside a stack that is already up), not judged from the diff:
 
 1. Rebuild (`cargo build --release --workspace`; the assets are embedded), restart the instance, sign in.
-2. Inject `tests/dashboard/ui_audit.js` and run it on every view and every Settings tab, in dark and light, at 1600, 1282, 1024 and 375 px wide. It reports strike-through, nested pills, uneven control rows, overflow, badges or buttons clipped by a cell, uneven card rows, mixed container styles, WCAG contrast and small touch targets. The result must be `total: 0` everywhere; `scrollsX` entries are informational.
+2. Inject `tests/dashboard/ui_audit.js` and run it on every view and every Settings tab, in dark and light, at 1600, 1282, 1024 and 375 px wide. `python3 tests/dashboard/inject_audit.py` prints one script that does this per width (it runs `ui_sweep.js`). It reports strike-through, nested pills, uneven control rows, overflow, badges or buttons clipped by a cell, cut-off column headers, uneven card rows, mixed container styles, WCAG contrast, small touch targets and focusable controls hidden beside the viewport. The result must be `total: 0` everywhere; `scrollsX` entries are informational.
 3. Look at screenshots of each view as well. The audit cannot see everything (a misleading label, a cramped layout), and an anomaly seen by eye is fixed even when the audit passes. When the audit missed it, add a check for it.
 
 ### Copy

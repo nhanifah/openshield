@@ -105,12 +105,19 @@
   }
 
   // 7. WCAG contrast of visible text (4.5:1, or 3:1 for large text).
-  // Handles rgb()/rgba() and color(srgb r g b / a), which color-mix() computes to (channels 0-1).
+  // Any CSS color (rgb, color(srgb ...), and the oklab()/oklch() values
+  // Chrome reports mid-animation) is resolved by painting it on a canvas.
+  const px = document.createElement('canvas').getContext('2d', { willReadFrequently: true });
+  const parsed = new Map();
   const parse = (c) => {
-    const m = c.match(/[\d.]+/g);
-    if (!m) return [0, 0, 0, 0];
-    const v = m.map(Number);
-    if (c.startsWith('color(')) return [v[0] * 255, v[1] * 255, v[2] * 255, v.length > 3 ? v[3] : 1];
+    if (parsed.has(c)) return parsed.get(c);
+    px.clearRect(0, 0, 1, 1);
+    px.fillStyle = 'rgba(0, 0, 0, 0)';
+    px.fillStyle = c;
+    px.fillRect(0, 0, 1, 1);
+    const [r, g, b, a] = px.getImageData(0, 0, 1, 1).data;
+    const v = [r, g, b, a / 255];
+    parsed.set(c, v);
     return v;
   };
   const lum = ([r, g, b]) => { const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; }; return 0.2126 * f(r) + 0.7152 * f(g) + 0.0722 * f(b); };
@@ -149,7 +156,25 @@
     ? all.filter((el) => el.matches('button, a[href], input, select') && target(el).getBoundingClientRect().height < 32 && !el.closest('td')).slice(0, 12).map((el) => Math.round(el.getBoundingClientRect().height) + 'px ' + name(el))
     : [];
 
-  out.total = out.strike.length + out.nestedPills.length + out.rowHeights.length + out.overflow.length + out.clippedControls.length + (out.pageScrollsSideways ? 1 : 0)
+  // 9. Keyboard stops nobody can see: focusable controls placed beside the
+  // viewport (a closed slide-in menu) that are not inside a sideways scroller.
+  const FOCUSABLE = 'a[href], button:not(:disabled), input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])';
+  out.offscreenFocusable = [...document.querySelectorAll('#app ' + FOCUSABLE.split(', ').join(', #app '))].filter((el) => {
+    if (!vis(el)) return false;
+    const r = el.getBoundingClientRect();
+    if (r.right > 0 && r.left < innerWidth) return false;
+    // Reachable by scrolling only if its scroller is itself on screen.
+    for (let n = el.parentElement; n && n !== document.body; n = n.parentElement) {
+      const s = n.getBoundingClientRect();
+      if (scrollsX(n) && s.right > 0 && s.left < innerWidth) return false;
+    }
+    return true;
+  }).slice(0, 10).map(name);
+
+  // 10. Column headers cut off ("STAT…", "METH…").
+  out.clippedHeaders = all.filter((el) => el.matches('th, [role=columnheader]') && el.scrollWidth > el.clientWidth + 1).slice(0, 10).map(name);
+
+  out.total = out.offscreenFocusable.length + out.clippedHeaders.length + out.strike.length + out.nestedPills.length + out.rowHeights.length + out.overflow.length + out.clippedControls.length + (out.pageScrollsSideways ? 1 : 0)
     + out.clippedText.length + Object.keys(out.containerStyles).length + out.uneven.length + out.lowContrastCount + out.smallTargets.length;
   return out;
 })();

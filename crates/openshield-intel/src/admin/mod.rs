@@ -562,7 +562,7 @@ async fn alert_summarize(State(app): S, c: Caller, Path(id): Path<i64>) -> ApiRe
         Ok(summary) => {
             app.hub.store.set_alert_summary(id, &summary).map_err(ApiError::internal)?;
             audit(&app, &c, "alert_summarize", &id.to_string(), json!({}), "ok");
-            ok(json!({"summary": summary, "advisory": true}))
+            ok(json!({"summary": summary, "advisory": true, "model": ai.model()}))
         }
         Err(e) => {
             audit(&app, &c, "alert_summarize", &id.to_string(), json!({"error": e}), "failed");

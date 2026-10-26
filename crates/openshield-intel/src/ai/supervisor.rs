@@ -529,6 +529,11 @@ impl Supervisor {
         }
     }
 
+    /// The model id, so free-text output can be labelled with it.
+    pub fn model(&self) -> String {
+        self.provider.model().into()
+    }
+
     /// One free-text completion under the same breaker and budget.
     pub async fn summarize(&self, system: &str, user: &str) -> Result<String, String> {
         self.reserve_call().await?;
