@@ -14,6 +14,8 @@ Rust reverse proxy and WAF on Pingora and Wirefilter. Crates:
 - `cargo test --workspace` for unit tests; `cargo build --release --workspace` before any script below.
 - `python3 tests/e2e/run_e2e.py --tag <tag>`: proxy end-to-end suite (`--skip-slow` skips the two 10 s+ tests).
 - `python3 tests/e2e/run_intel_e2e.py --tag <tag>`: intelligence layer, admin API and dashboard headers.
+- `python3 tests/rulesets/check_recommended.py`: runs `examples/rulesets/recommended.yaml` in a real proxy, one attack and normal requests per rule. Run it after any change to that file. In rule regexes (`matches "..."`) backslashes are passed through as written: write `\.`, not `\\.`.
+- `docker build -t openshield:local .` builds the Linux image; `deploy/kartukenangan/` is a live deployment (read its README before changing it).
 - `python3 tests/bench/run_bench.py --tag <tag>` and `tests/bench/memory_growth.py`: performance. Do not run other heavy work at the same time; it skews the numbers.
 - Evidence goes to `reports/evidence/`. Never report a number that was not measured.
 
@@ -28,6 +30,7 @@ Rust reverse proxy and WAF on Pingora and Wirefilter. Crates:
 - AI verdicts are advisory. Nothing in the request path may depend on them.
 - Every admin API state change is role-checked and written to the admin audit log.
 - Geo rules compile to `geo:<id>` WAF rules (`GeoRule::expression`); `GeoRule::matches` must decide exactly the same, a core test checks both. Unknown locations never match, and IP allows always win. Geo tests use `tests/fixtures/geo/` (documentation ranges only; regenerate with `make_geo_mmdb.py`), never real addresses.
+- Error pages (`openshield_core::error_page`) HTML-escape every value and are served with a no-script CSP; keep both when changing templates.
 - Passkey checks live in `webauthn.rs` (no WebAuthn crate: a strict, depth-limited CBOR decoder and aws-lc-rs signatures). Keep user verification required and challenges single use. Test passkey UI with `tests/dashboard/soft_passkey.js`, never a real operator's key.
 - Secrets saved from the dashboard go through `vault::Vault` (AES-256-GCM, value name as associated data) and are never returned by the API; admin tokens are stored as SHA-256 digests only. A new kind of secret must follow the same path.
 

@@ -1,0 +1,275 @@
+{
+  "time": "2026-10-26T03:13:47Z",
+  "results": [
+    {
+      "kind": "attack",
+      "rule": "sqli-args",
+      "request": "GET /p?id=1%27%20OR%20%271%27%3D%271",
+      "status": 403,
+      "matched": [
+        "sqli-args"
+      ],
+      "ok": true
+    },
+    {
+      "kind": "attack",
+      "rule": "sqli-cookies",
+      "request": "GET /p",
+      "status": 403,
+      "matched": [
+        "sqli-cookies"
+      ],
+      "ok": true
+    },
+    {
+      "kind": "attack",
+      "rule": "sqli-form",
+      "request": "POST /f",
+      "status": 403,
+      "matched": [
+        "sqli-form"
+      ],
+      "ok": true
+    },
+    {
+      "kind": "attack",
+      "rule": "xss-args",
+      "request": "GET /p?q=%3Cscript%3Ealert%281%29%3C%2Fscript%3E",
+      "status": 403,
+      "matched": [
+        "xss-args"
+      ],
+      "ok": true
+    },
+    {
+      "kind": "attack",
+      "rule": "xss-form",
+      "request": "POST /f",
+      "status": 403,
+      "matched": [
+        "xss-form"
+      ],
+      "ok": true
+    },
+    {
+      "kind": "attack",
+      "rule": "xss-uri-scheme",
+      "request": "GET /p?next=javascript%3Aalert%281%29",
+      "status": 403,
+      "matched": [
+        "xss-uri-scheme"
+      ],
+      "ok": true
+    },
+    {
+      "kind": "attack",
+      "rule": "traversal-uri",
+      "request": "GET /files/../../etc/x",
+      "status": 403,
+      "matched": [
+        "traversal-uri"
+      ],
+      "ok": true
+    },
+    {
+      "kind": "attack",
+      "rule": "lfi-targets",
+      "request": "GET /p?file=%2Fetc%2Fpasswd",
+      "status": 403,
+      "matched": [
+        "lfi-targets"
+      ],
+      "ok": true
+    },
+    {
+      "kind": "attack",
+      "rule": "cmdi-args",
+      "request": "GET /p?host=x%3B%20whoami",
+      "status": 403,
+      "matched": [
+        "cmdi-args"
+      ],
+      "ok": true
+    },
+    {
+      "kind": "attack",
+      "rule": "cmdi-form",
+      "request": "POST /f",
+      "status": 403,
+      "matched": [
+        "cmdi-form"
+      ],
+      "ok": true
+    },
+    {
+      "kind": "attack",
+      "rule": "ssrf-internal-url",
+      "request": "GET /p?url=http%3A%2F%2F169.254.169.254%2Flatest",
+      "status": 403,
+      "matched": [
+        "ssrf-internal-url"
+      ],
+      "ok": true
+    },
+    {
+      "kind": "attack",
+      "rule": "jndi-lookup",
+      "request": "GET /p",
+      "status": 403,
+      "matched": [
+        "jndi-lookup"
+      ],
+      "ok": true
+    },
+    {
+      "kind": "attack",
+      "rule": "ssti-args",
+      "request": "GET /p?name=%7B%7Bconfig.items%28%29%7D%7D",
+      "status": 403,
+      "matched": [
+        "ssti-args"
+      ],
+      "ok": true
+    },
+    {
+      "kind": "attack",
+      "rule": "xxe-body",
+      "request": "POST /x",
+      "status": 403,
+      "matched": [
+        "xxe-body"
+      ],
+      "ok": true
+    },
+    {
+      "kind": "attack",
+      "rule": "nosql-operators",
+      "request": "GET /p?user[$ne]=x",
+      "status": 403,
+      "matched": [
+        "nosql-operators"
+      ],
+      "ok": true
+    },
+    {
+      "kind": "attack",
+      "rule": "nosql-json-body",
+      "request": "POST /j",
+      "status": 403,
+      "matched": [
+        "nosql-json-body"
+      ],
+      "ok": true
+    },
+    {
+      "kind": "attack",
+      "rule": "scanner-user-agent",
+      "request": "GET /",
+      "status": 403,
+      "matched": [
+        "scanner-user-agent"
+      ],
+      "ok": true
+    },
+    {
+      "kind": "attack",
+      "rule": "sensitive-files",
+      "request": "GET /.env",
+      "status": 403,
+      "matched": [
+        "sensitive-files"
+      ],
+      "ok": true
+    },
+    {
+      "kind": "attack",
+      "rule": "sensitive-files",
+      "request": "GET /.git/config",
+      "status": 403,
+      "matched": [
+        "sensitive-files"
+      ],
+      "ok": true
+    },
+    {
+      "kind": "benign",
+      "rule": "",
+      "request": "GET /",
+      "status": 200,
+      "matched": [],
+      "ok": true
+    },
+    {
+      "kind": "benign",
+      "rule": "",
+      "request": "GET /buat?paket=standard&_rsc=abc123",
+      "status": 200,
+      "matched": [],
+      "ok": true
+    },
+    {
+      "kind": "benign",
+      "rule": "",
+      "request": "GET /undangan/andi-dan-sari?ref=instagram",
+      "status": 200,
+      "matched": [],
+      "ok": true
+    },
+    {
+      "kind": "benign",
+      "rule": "",
+      "request": "GET /search?q=kartu%20ucapan%20pernikahan%20%26%20ulang%20tahun",
+      "status": 200,
+      "matched": [],
+      "ok": true
+    },
+    {
+      "kind": "benign",
+      "rule": "",
+      "request": "GET /p?next=%2Fdashboard%2Forders",
+      "status": 200,
+      "matched": [],
+      "ok": true
+    },
+    {
+      "kind": "benign",
+      "rule": "",
+      "request": "GET /p?email=o%27brien%40example.com",
+      "status": 200,
+      "matched": [],
+      "ok": true
+    },
+    {
+      "kind": "benign",
+      "rule": "",
+      "request": "POST /api/rsvp",
+      "status": 200,
+      "matched": [],
+      "ok": true
+    },
+    {
+      "kind": "benign",
+      "rule": "",
+      "request": "POST /f",
+      "status": 200,
+      "matched": [],
+      "ok": true
+    },
+    {
+      "kind": "benign",
+      "rule": "",
+      "request": "GET /static/app.js?v=1.2.3",
+      "status": 200,
+      "matched": [],
+      "ok": true
+    },
+    {
+      "kind": "benign",
+      "rule": "",
+      "request": "GET /env-info",
+      "status": 200,
+      "matched": [],
+      "ok": true
+    }
+  ]
+}

@@ -1,0 +1,10 @@
+target
+.git
+.claude
+.openshield-local
+reports
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/openshield-secret.key
+**/openshield-setup-token

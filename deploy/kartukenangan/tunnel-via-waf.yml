@@ -1,0 +1,6 @@
+# Override for the app's compose file: send the tunnel's traffic through
+# OpenShield instead of straight to the app. Remove it (recreate the tunnel
+# from the original file) to route around the WAF again.
+services:
+  tunnel:
+    command: tunnel --no-autoupdate run --url http://openshield:8080 --token ${CLOUDFLARE_TUNNEL_TOKEN:-missing}

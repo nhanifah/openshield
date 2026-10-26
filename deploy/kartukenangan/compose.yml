@@ -1,0 +1,34 @@
+# OpenShield for kartukenangan, as its own compose project on the app's
+# network. Start:  docker compose -f deploy/kartukenangan/compose.yml up -d
+# Dashboard:       http://localhost:19300  (setup token: see README.md)
+name: kartukenangan-waf
+
+services:
+  openshield:
+    image: openshield:local
+    container_name: kartukenangan-openshield
+    volumes:
+      - ./openshield.yaml:/etc/openshield/openshield.yaml:ro
+      - openshield_data:/var/lib/openshield
+    ports:
+      - "127.0.0.1:19300:9091"   # dashboard, this machine only
+    networks:
+      kartukenangan:
+        aliases: [openshield]
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:9091/healthz"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    mem_limit: 512m
+    stop_grace_period: 20s
+    restart: unless-stopped
+
+networks:
+  kartukenangan:
+    external: true
+    name: kartukenangan_default
+
+volumes:
+  openshield_data:

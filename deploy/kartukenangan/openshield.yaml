@@ -1,0 +1,166 @@
+# OpenShield in front of kartukenangan (undangan-online), behind its
+# Cloudflare Tunnel:  Cloudflare edge -> tunnel -> openshield:8080 -> app:3000
+#
+# Monitoring mode: rules are evaluated and logged, nothing is blocked
+# (detection_only: true). Review matches in the dashboard before enforcing.
+# The dashboard is published on 127.0.0.1:19300 only.
+
+listen: "0.0.0.0:8080"
+upstream: "http://app:3000"
+workers: 2
+
+# Only containers on the kartukenangan network reach this proxy, and the
+# tunnel sets CF-Connecting-IP from Cloudflare's edge.
+trusted_proxies: ["192.168.147.0/24"]
+client_ip_header: "CF-Connecting-IP"
+
+logging:
+  format: json
+  access_log: /dev/null
+  audit_log: /dev/stderr
+
+# Invitations carry photo uploads: inspect the first 1 MiB of a body, then
+# pass the rest through.
+max_request_body_buffer: 1048576
+request_body_limit_action: process_partial
+
+detection_only: true
+
+# What visitors see when the WAF answers instead of the app.
+error_pages:
+  language: id
+  site_name: KartuKenangan
+  support_email: halo@kartukenangan.id
+log_payloads: false
+
+intel:
+  enabled: true
+  store:
+    path: /var/lib/openshield/intel.db
+    retention_days: 30
+  ai:
+    enabled: false
+  geo:
+    city_mmdb: /var/lib/openshield/geo/dbip-city-lite.mmdb
+    asn_mmdb: /var/lib/openshield/geo/dbip-asn-lite.mmdb
+    auto_update: true
+
+admin:
+  enabled: true
+  listen: "0.0.0.0:9091"
+  users: []
+
+scores: [attack]
+
+rulesets:
+  - name: recommended
+    kind: root
+    rules:
+      # ---- SQL injection (libinjection) ---------------------------------
+      - id: sqli-args
+        categories: [sqli]
+        action: block
+        expression: "any(detect_sqli(url_decode_uni(http.request.uri.args.values[*])))"
+      - id: sqli-cookies
+        categories: [sqli]
+        action: block
+        expression: "any(detect_sqli(url_decode_uni(http.request.cookies.values[*])))"
+      - id: sqli-form
+        categories: [sqli]
+        phase: request_body
+        action: block
+        expression: "any(detect_sqli(http.request.body.form.values[*]))"
+      - id: sqli-multipart
+        categories: [sqli]
+        phase: request_body
+        action: block
+        expression: "any(detect_sqli(http.request.body.multipart.values[*]))"
+
+      # ---- Cross-site scripting -------------------------------------------
+      - id: xss-args
+        categories: [xss]
+        action: block
+        expression: "any(detect_xss(html_entity_decode(url_decode_uni(http.request.uri.args.values[*]))))"
+      - id: xss-form
+        categories: [xss]
+        phase: request_body
+        action: block
+        expression: "any(detect_xss(html_entity_decode(http.request.body.form.values[*])))"
+      - id: xss-uri-scheme
+        categories: [xss]
+        action: block
+        expression: 'any(lower(remove_whitespace(url_decode_uni(http.request.uri.args.values[*])))[*] matches "^(javascript|vbscript|data:text/html)")'
+
+      # ---- Path traversal and local file inclusion ------------------------
+      - id: traversal-uri
+        categories: [traversal]
+        action: block
+        expression: 'lower(url_decode_uni(url_decode_uni(http.request.uri))) matches "(\.\./|\.\.\\|%2e%2e|\.\.%2f)"'
+      - id: lfi-targets
+        categories: [traversal]
+        action: block
+        expression: 'any(lower(url_decode_uni(http.request.uri.args.values[*]))[*] matches "(/etc/(passwd|shadow|hosts|group)|/proc/self/|c:\\windows\\|win\.ini|boot\.ini|php://(filter|input)|file://)")'
+
+      # ---- OS command injection -------------------------------------------
+      - id: cmdi-args
+        categories: [cmdi]
+        action: block
+        expression: 'any(lower(url_decode_uni(http.request.uri.args.values[*]))[*] matches "(;|\||&&|\$\(|`|\n)\s*(cat|id|whoami|uname|wget|curl|nc|ncat|bash|sh|ping|nslookup|powershell|cmd(\.exe)?)\b")'
+      - id: cmdi-form
+        categories: [cmdi]
+        phase: request_body
+        action: block
+        expression: 'any(lower(http.request.body.form.values[*])[*] matches "(;|\||&&|\$\(|`)\s*(cat|id|whoami|uname|wget|curl|nc|bash|sh|ping|powershell)\b")'
+
+      # ---- Server-side request forgery ------------------------------------
+      - id: ssrf-internal-url
+        categories: [ssrf]
+        action: block
+        expression: 'any(lower(url_decode_uni(http.request.uri.args.values[*]))[*] matches "^(https?|gopher|dict|ftp|file)://(localhost|127\.|0\.0\.0\.0|0x7f|2130706433|169\.254\.|\[::1?\]|10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.|metadata\.google|metadata\.azure)")'
+
+      # ---- Template and expression injection ------------------------------
+      - id: jndi-lookup
+        categories: [rce]
+        action: block
+        expression: 'lower(url_decode_uni(http.request.full_uri)) contains "${jndi:" or any(lower(http.request.headers.values[*])[*] contains "${jndi:")'
+      - id: ssti-args
+        categories: [rce]
+        action: block
+        expression: 'any(url_decode_uni(http.request.uri.args.values[*])[*] matches "(\{\{.*(__class__|config|self|request|cycler|joiner).*\}\}|\$\{.*(Runtime|getClass|exec).*\}|<%=)")'
+
+      # ---- XML external entities and NoSQL operators ----------------------
+      - id: xxe-body
+        categories: [xxe]
+        phase: request_body
+        action: block
+        expression: 'lower(http.request.body.raw) matches "<!(doctype|entity)[^>]*(system|public)"'
+      - id: nosql-operators
+        categories: [nosql]
+        action: block
+        expression: 'any(http.request.uri.args.names[*] matches "\[\$(ne|gt|lt|gte|lte|regex|where|in|nin|exists)\]")'
+      - id: nosql-json-body
+        categories: [nosql]
+        phase: request_body
+        action: block
+        expression: 'http.request.body.raw matches "\{\s*\"\$(ne|gt|lt|gte|regex|where|nin|exists)\"\s*:"'
+
+      # ---- Scanners and probes ---------------------------------------------
+      - id: scanner-user-agent
+        categories: [scanner]
+        action: block
+        expression: 'lower(http.user_agent) matches "(sqlmap|nikto|nmap|masscan|acunetix|nessus|openvas|dirbuster|gobuster|feroxbuster|wpscan|nuclei|zgrab|hydra|w3af|arachni)"'
+      - id: sensitive-files
+        categories: [probe]
+        action: block
+        expression: 'lower(http.request.uri.path.normalized) matches "/(\.env(\.|$)|\.git/|\.svn/|\.hg/|\.htpasswd|\.htaccess|\.aws/|\.ssh/|id_rsa|\.ds_store|wp-config\.php|web\.config|phpinfo\.php|server-status)"'
+
+      # ---- Header anomalies (scored, not blocking on their own) -----------
+      - id: header-crlf
+        categories: [protocol]
+        action: score
+        action_parameters:
+          scores: [{name: attack, increment: 5}]
+        expression: 'any(url_decode_uni(http.request.uri.args.values[*])[*] matches "(\r|\n)(set-cookie|location|content-type)\s*:")'
+      - id: score-threshold
+        action: block
+        expression: "score.attack >= 5"
