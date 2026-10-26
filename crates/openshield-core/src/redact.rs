@@ -279,7 +279,7 @@ mod tests {
 
     #[test]
     fn tokens_inside_other_headers_are_masked() {
-        let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJl";
+        let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0In0.c2lnbmF0dXJl"; // gitleaks:allow (fake test token)
         assert_eq!(r().header("x-forwarded-token", jwt), "[REDACTED:jwt]");
     }
 
@@ -311,7 +311,7 @@ mod tests {
 
     #[test]
     fn keys_emails_and_cards_are_masked_in_text() {
-        let t = "key AKIAABCDEFGHIJKLMNOP mail bob@example.com card 4111 1111 1111 1111 order 1234567890123";
+        let t = "key AKIAABCDEFGHIJKLMNOP mail bob@example.com card 4111 1111 1111 1111 order 1234567890123"; // gitleaks:allow (fake test values)
         let out = r().text(t);
         assert!(!out.contains("AKIA"), "{out}");
         assert!(!out.contains("bob@example.com"), "{out}");

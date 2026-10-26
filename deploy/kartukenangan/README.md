@@ -24,6 +24,9 @@ docker exec kartukenangan-openshield cat /var/lib/openshield/openshield-setup-to
 
 For passkeys, set Settings, Security, Allowed origins to `http://localhost:19300`.
 
+Optional secrets (encryption key, AI key) go in `deploy/kartukenangan/.env`; copy
+`.env.example`. The file is git-ignored.
+
 ## Route the tunnel through the WAF
 
 Recreates only the tunnel container (a few seconds of reconnect):

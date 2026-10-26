@@ -1,0 +1,3 @@
+# Fake values in redaction tests (crates/openshield-core/src/redact.rs), not credentials.
+07d35a0295ae089f7a6ae7fff41ba439958c0ef3:crates/openshield-core/src/redact.rs:aws-access-token:314
+07d35a0295ae089f7a6ae7fff41ba439958c0ef3:crates/openshield-core/src/redact.rs:jwt:282

@@ -1,2 +1,21 @@
 /target
 /.openshield-local
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+openshield-secret.key
+openshield-setup-token
+
+# Local data
+*.db
+*.db-wal
+*.db-shm
+*.mmdb
+!tests/fixtures/geo/*.mmdb
+
+# Local tooling
+/.claude/

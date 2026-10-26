@@ -7,6 +7,10 @@ services:
   openshield:
     image: openshield:local
     container_name: kartukenangan-openshield
+    # Optional secrets (see .env.example); the file itself is never committed.
+    env_file:
+      - path: .env
+        required: false
     volumes:
       - ./openshield.yaml:/etc/openshield/openshield.yaml:ro
       - openshield_data:/var/lib/openshield
