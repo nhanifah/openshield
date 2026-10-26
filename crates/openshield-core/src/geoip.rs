@@ -5,6 +5,7 @@ use maxminddb::{Reader, geoip2};
 #[derive(Clone)]
 pub struct GeoIpLookup {
     pub as_num: Option<u32>,
+    pub country_name: Option<String>,
     pub is_in_european_union: bool,
     pub as_org: Option<String>,
     pub city: Option<String>,
@@ -19,9 +20,22 @@ pub struct GeoIpLookup {
     pub timezone: Option<String>,
 }
 
+/// City (or country) and ASN databases in MaxMind DB format: GeoLite2 or
+/// DB-IP Lite. Either may be absent; lookups then leave those fields empty.
 pub struct GeoIp {
-    city_reader: Reader<Vec<u8>>,
-    asn_reader: Reader<Vec<u8>>,
+    city_reader: Option<Reader<Vec<u8>>>,
+    asn_reader: Option<Reader<Vec<u8>>>,
+}
+
+/// What a loaded database file is.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct GeoDbInfo {
+    pub kind: &'static str,
+    pub database_type: String,
+    /// Unix seconds when the file was built.
+    pub build_epoch: u64,
+    pub ip_version: u16,
+    pub node_count: u32,
 }
 
 impl GeoIp {
@@ -33,14 +47,56 @@ impl GeoIp {
         let asn_reader = Reader::open_readfile(asn_path)?;
 
         Ok(Self {
-            city_reader,
-            asn_reader,
+            city_reader: Some(city_reader),
+            asn_reader: Some(asn_reader),
         })
+    }
+
+    /// Open whichever databases are given. A file that is not a location
+    /// (City/Country) or ASN database is refused.
+    pub fn open_parts(
+        city_path: Option<&std::path::Path>,
+        asn_path: Option<&std::path::Path>,
+    ) -> Result<Self, String> {
+        let open = |p: &std::path::Path, want: &[&str]| -> Result<Reader<Vec<u8>>, String> {
+            let r = Reader::open_readfile(p).map_err(|e| format!("{}: {e}", p.display()))?;
+            let t = r.metadata.database_type.to_ascii_lowercase();
+            if !want.iter().any(|w| t.contains(w)) {
+                return Err(format!(
+                    "{}: database type {:?} is not a {} database",
+                    p.display(),
+                    r.metadata.database_type,
+                    want.join("/")
+                ));
+            }
+            Ok(r)
+        };
+        Ok(Self {
+            city_reader: city_path.map(|p| open(p, &["city", "country", "location"])).transpose()?,
+            asn_reader: asn_path.map(|p| open(p, &["asn", "isp"])).transpose()?,
+        })
+    }
+
+    pub fn info(&self) -> Vec<GeoDbInfo> {
+        let mut out = Vec::new();
+        for (kind, r) in [("location", &self.city_reader), ("asn", &self.asn_reader)] {
+            if let Some(r) = r {
+                out.push(GeoDbInfo {
+                    kind,
+                    database_type: r.metadata.database_type.clone(),
+                    build_epoch: r.metadata.build_epoch,
+                    ip_version: r.metadata.ip_version,
+                    node_count: r.metadata.node_count,
+                });
+            }
+        }
+        out
     }
 
     pub fn lookup(&self, ip: IpAddr) -> GeoIpLookup {
         let mut result = GeoIpLookup {
             as_num: None,
+            country_name: None,
             is_in_european_union: false,
             as_org: None,
             city: None,
@@ -55,18 +111,23 @@ impl GeoIp {
             timezone: None,
         };
 
-        if let Ok(lookup) = self.asn_reader.lookup(ip) {
-            if let Ok(Some(asn)) = lookup.decode::<geoip2::Asn>() {
-                result.as_num = asn.autonomous_system_number;
-                result.as_org = asn.autonomous_system_organization.map(String::from);
-            }
+        if let Some(r) = &self.asn_reader
+            && let Ok(lookup) = r.lookup(ip)
+            && let Ok(Some(asn)) = lookup.decode::<geoip2::Asn>()
+        {
+            result.as_num = asn.autonomous_system_number;
+            result.as_org = asn.autonomous_system_organization.map(String::from);
         }
 
-        if let Ok(lookup) = self.city_reader.lookup(ip) {
-            if let Ok(Some(city)) = lookup.decode::<geoip2::City>() {
+        if let Some(r) = &self.city_reader
+            && let Ok(lookup) = r.lookup(ip)
+            && let Ok(Some(city)) = lookup.decode::<geoip2::City>()
+        {
+            {
                 result.city = city.city.names.english.map(String::from);
                 result.continent = city.continent.code.map(String::from);
                 result.country = city.country.iso_code.map(String::from);
+                result.country_name = city.country.names.english.map(String::from);
                 result.is_in_european_union =
                     is_in_european_union(city.country.iso_code, city.country.is_in_european_union);
                 result.lat = city.location.latitude;
@@ -83,6 +144,17 @@ impl GeoIp {
         }
 
         result
+    }
+}
+
+/// How events and geo rules name a region: `ID-JK` from an ISO 3166-2
+/// code, or `ID:Jakarta` when the database names regions without codes.
+pub fn region_key(country: Option<&str>, code: Option<&str>, name: Option<&str>) -> Option<String> {
+    let c = country?;
+    match (code, name) {
+        (Some(r), _) if !r.is_empty() => Some(format!("{c}-{r}")),
+        (_, Some(n)) if !n.is_empty() => Some(format!("{c}:{n}")),
+        _ => None,
     }
 }
 

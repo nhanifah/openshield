@@ -185,6 +185,30 @@
     if (color) cvar(f, color);
     return h('div', { class: 'bar-track', 'aria-hidden': 'true' }, f);
   }
+  // ---- location: "ID-JK · AS64500", or "Private network"
+  function originText(o) {
+    if (!o) return '';
+    if (o.private_ip) return 'Private network';
+    return [str(o.region || o.country), o.asn ? 'AS' + o.asn : ''].filter(Boolean).join(' · ');
+  }
+  function originEl(o, loc) {
+    const t = originText(o);
+    if (!t) return h('span', { class: 'faint', text: '—', title: 'Location unknown (no geo database, or not in it)' });
+    loc = loc || {};
+    const place = [str(loc.city), str(loc.region_name), str(loc.country_name)].filter(Boolean).join(', ');
+    const title = o.private_ip ? 'Private, loopback or link-local address: no public location'
+      : [place || str(o.region || o.country), o.asn ? 'AS' + o.asn + (o.as_org ? ' ' + o.as_org : '') : ''].filter(Boolean).join(' · ');
+    return h('span', { class: o.private_ip ? 'faint' : '', text: t, title });
+  }
+  function codeList(v) { return String(v || '').split(/[\s,;]+/).map((x) => x.trim()).filter(Boolean); }
+
+  function locationText(ev) {
+    const l = ev.location || {};
+    if (ev.private_ip || l.private_ip) return 'Private network (no public location)';
+    if (!ev.country) return 'Unknown';
+    const region = l.region_name ? l.region_name + (ev.region ? ' (' + ev.region + ')' : '') : str(ev.region);
+    return [str(l.city), region, (l.country_name || ev.country) + (l.country_name ? ' (' + ev.country + ')' : '')].filter(Boolean).join(', ');
+  }
   function anomalyMeter(x) {
     const c = x >= 0.8 ? 'var(--c-block)' : x >= 0.5 ? 'var(--c-challenge)' : 'var(--c-pass)';
     return h('span', { class: 'meter' }, meter(x, c), anomalyText(x));
@@ -459,13 +483,88 @@
       dlg.addEventListener('cancel', onEsc);
       dlg.showModal();
       // Danger: never focus where one Enter confirms.
-      const fields = [...$('modal-body').querySelectorAll('input:not([type=hidden]):not([type=checkbox]):not([type=radio]),select,textarea')];
+      const fields = [...$('modal-body').querySelectorAll('input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([readonly]),select,textarea:not([readonly])')];
       const first = o.danger ? fields.find((f) => f.matches('input,textarea') && !f.value) : fields[0];
       (first || (o.hideOk || o.danger ? cancelBtn : okBtn)).focus();
     });
   }
   function ttlSelect(def) { return select(TTLS.map(([v, t]) => [v, t]), def === undefined ? 3600 : def); }
   function ttlValue(sel) { const v = Number(sel.value); return v > 0 ? v : undefined; }
+
+  // Add or edit one geo rule; the whole list is saved as a new policy version.
+  const GEO_ACTIONS = [['block', 'Block (403)'], ['challenge', 'Challenge (Turnstile)'], ['log', 'Log only']];
+  const GEO_MODES = [['deny', 'Requests from the places below'], ['allow_only', 'Requests from anywhere except the places below']];
+  async function geoRuleDialog(rule, prefill) {
+    let cur;
+    try { cur = await api('/api/geo'); } catch (e) { if (e.status !== 401) toast(e.message, 'error'); return null; }
+    const rules = Array.isArray(cur.rules) ? cur.rules : [];
+    const r = Object.assign({ id: '', mode: 'deny', action: 'block', countries: [], regions: [], asns: [], enabled: true, description: '' }, rule || {}, prefill || {});
+    const id = h('input', { type: 'text', value: r.id, maxLength: 48, spellcheck: false, autocomplete: 'off', placeholder: 'only-indonesia', readOnly: !!rule });
+    const mode = select(GEO_MODES, r.mode);
+    const action = select(GEO_ACTIONS, r.action);
+    const countries = h('input', { type: 'text', value: (r.countries || []).join(', '), spellcheck: false, autocomplete: 'off', placeholder: 'ID, SG' });
+    const regions = h('input', { type: 'text', value: (r.regions || []).join(', '), spellcheck: false, autocomplete: 'off', placeholder: 'ID-JK, ID:Jakarta' });
+    const asns = h('input', { type: 'text', value: (r.asns || []).map((a) => 'AS' + a).join(', '), spellcheck: false, autocomplete: 'off', placeholder: 'AS13335' });
+    const desc = h('input', { type: 'text', value: str(r.description), maxLength: 200, placeholder: 'Why this rule exists' });
+    const en = checkbox('Enabled', r.enabled !== false);
+    const impact = h('div', { class: 'callout', role: 'status', 'aria-live': 'polite' }, icon('filter'), h('span', { text: 'Enter at least one country, region or network to see the impact.' }));
+    const geoOff = cur.status && cur.status.loaded === false
+      ? h('div', { class: 'callout callout-warn' }, icon('eye'), h('span', { text: 'No location database is loaded, so this rule will match nothing until one is (Settings, Geo data).' })) : null;
+    function build() {
+      const a = codeList(asns.value).map((x) => Number(x.replace(/^as/i, '')));
+      if (a.some((n) => !Number.isInteger(n) || n <= 0 || n > 4294967295)) throw new Error('Networks: use AS numbers such as AS13335 or 13335.');
+      return { id: id.value.trim().toLowerCase(), mode: mode.value, action: action.value, enabled: en.box.checked,
+        description: desc.value.trim() || undefined,
+        countries: codeList(countries.value).map((x) => x.toUpperCase()), regions: String(regions.value || '').split(/[,;]+/).map((x) => x.trim()).filter(Boolean).map((x) => (x.indexOf(':') > 0 ? x.slice(0, x.indexOf(':')).toUpperCase() + ':' + x.slice(x.indexOf(':') + 1).trim() : x.toUpperCase())), asns: a };
+    }
+    let timer = 0, seq = 0;
+    async function estimate() {
+      let b;
+      try { b = build(); } catch (e) { impact.lastChild.textContent = e.message; return; }
+      if (!b.countries.length && !b.regions.length && !b.asns.length) { impact.lastChild.textContent = 'Enter at least one country, region or network to see the impact.'; return; }
+      const n = ++seq;
+      try {
+        const res = await api('/api/geo/impact', { method: 'POST', body: Object.assign({}, b, { id: b.id || 'draft' }) });
+        if (n !== seq) return;
+        const i = res.impact || {};
+        impact.lastChild.textContent = i.total
+          ? 'In the last 24 h this rule would have acted on ' + full(i.matched) + ' of ' + full(i.total) + ' requests (' + pct(ratio(i.matched, i.total), 1) + ') from ' + full(i.clients) + ' client' + (i.clients === 1 ? '' : 's')
+            + (i.matched_blocked_already ? '; ' + full(i.matched_blocked_already) + ' of them were already blocked' : '') + '.' + (i.approximate ? ' Approximate: busy period.' : '')
+          : 'No traffic recorded in the last 24 h to estimate from.';
+      } catch (e) { if (n === seq) impact.lastChild.textContent = e.message; }
+    }
+    for (const el of [mode, countries, regions, asns]) el.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(estimate, 350); });
+    mode.addEventListener('change', estimate);
+    estimate();
+    let result = null;
+    await modal({
+      title: rule ? 'Edit geo rule ' + str(rule.id) : 'Add geo rule', ok: rule ? 'Save rule' : 'Add rule', wide: true,
+      body: [geoOff,
+        h('div', { class: 'grid grid-2 dialog-grid' }, field('Name', id, rule ? 'Names cannot change.' : 'Lowercase letters, digits, - or _.'), field('Action', action)),
+        field('Applies to', mode, 'Requests with no known location (private addresses, or no database) are never matched.'),
+        h('div', { class: 'grid grid-3 dialog-grid' },
+          field('Countries', countries, 'Two-letter codes'), field('Regions', regions, 'ISO code (ID-JK), or ID:Name when the database has names only, as shown in the Origin column'), field('Networks', asns, 'AS numbers')),
+        field('Description', desc), en.el, impact,
+        h('p', { class: 'hint', text: 'Saving creates a new policy version (reversible from Policy). Addresses on the IP allow list are never geo-blocked. The dashboard itself is not affected.' })],
+      action: async () => {
+        let b;
+        try { b = build(); } catch (e) { return e.message; }
+        if (!b.id) return 'Enter a name.';
+        if (!rule && rules.some((x) => x.id === b.id)) return 'A rule named ' + b.id + ' already exists.';
+        const next = rule ? rules.map((x) => (x.id === rule.id ? b : x)) : rules.concat([b]);
+        try { result = await api('/api/geo/rules', { method: 'PUT', body: { rules: next } }); } catch (e) { return e.status === 401 ? undefined : e.message; }
+        geoSaved(result);
+      },
+    });
+    clearTimeout(timer);
+    return result;
+  }
+  function geoSaved(r) {
+    if (!r) return;
+    if (r.status === 'pending') toast('Geo rules saved as change #' + str(r.change_id) + '; a second admin must approve it under Policy.', 'warn', 8000);
+    else if (r.status === 'applied') toast('Geo rules applied as policy version ' + str(r.version) + '.', 'ok');
+    else toast('No change.', 'ok');
+  }
 
   async function blockDialog(value, reason, kind) {
     const allow = kind === 'allow';
@@ -906,14 +1005,19 @@
     const rules = card('Rules matched', { flush: true, sub: 'top 10' });
     const codes = card('Status codes');
     const methods = card('Methods');
-    const countries = card('Countries');
+    const countries = card('Countries', { flush: true, sub: 'requests · blocked' });
+    const regions = card('Regions', { flush: true, sub: 'requests · blocked' });
+    const networks = card('Networks (ASN)', { flush: true, sub: 'requests · blocked' });
     const aiCard = card('AI analysis', { actions: h('a', { href: '#/ai', class: 'btn btn-sm', text: 'Details' }) });
     const tops = h('div', { class: 'grid tops-grid' }, ips.el, paths.el, rules.el);
     root.appendChild(tops);
     root.lastChild.style.marginTop = 'var(--gap)';
-    root.appendChild(h('div', { class: 'grid grid-4' }, codes.el, methods.el, countries.el, aiCard.el));
+    const geoRow = h('div', { class: 'grid grid-3' }, countries.el, regions.el, networks.el);
+    root.appendChild(geoRow);
     root.lastChild.style.marginTop = 'var(--gap)';
-    for (const c of [ips, paths, rules, codes, methods, countries, aiCard]) c.body.replaceChildren(stateBox('loading', 'Loading…'));
+    root.appendChild(h('div', { class: 'grid grid-3' }, codes.el, methods.el, aiCard.el));
+    root.lastChild.style.marginTop = 'var(--gap)';
+    for (const c of [ips, paths, rules, codes, methods, countries, regions, networks, aiCard]) c.body.replaceChildren(stateBox('loading', 'Loading…'));
 
     let data = null, loading = false;
     async function load(spinner) {
@@ -929,7 +1033,7 @@
         renderAll();
       } catch (e) {
         if (!ctx.alive || e.status === 401) return;
-        if (!data) for (const c of [ips, paths, rules, codes, methods, countries, aiCard]) c.body.replaceChildren(stateBox('error', e.message));
+        if (!data) for (const c of [ips, paths, rules, codes, methods, countries, regions, networks, aiCard]) c.body.replaceChildren(stateBox('error', e.message));
         updated.textContent = 'Update failed: ' + e.message;
       } finally { loading = false; chart.el.removeAttribute('aria-busy'); }
     }
@@ -973,6 +1077,31 @@
       kids.push(h('span', { class: 'status-meta faint', text: 'Policy v' + str(data.policy_version) }));
       status.replaceChildren.apply(status, kids);
     }
+    function renderGeo() {
+      const g = data.geo || {};
+      const none = () => g.loaded === false
+        ? h('div', { class: 'state' }, h('span', { text: 'No location database is loaded.' }), can('admin') ? h('a', { href: '#/settings?tab=geo', text: 'Set one up under Settings, Geo data' }) : null)
+        : stateBox('empty', 'No located requests in this range');
+      const blockBtn = (label, rule) => can('admin')
+        ? h('button', { type: 'button', class: 'btn btn-sm btn-danger', text: 'Block…', 'aria-label': 'Block ' + label, onclick: async () => { if (await geoRuleDialog(null, rule)) load(); } }) : '';
+      const nums = [
+        { label: 'Req', num: true, render: (r) => compact(r.count) },
+        { label: 'Blocked', num: true, render: (r) => compact(r.blocked) },
+      ];
+      const list = (v) => (Array.isArray(v) ? v : []).slice(0, 8);
+      const tc = list(data.top_countries), trg = list(data.top_regions), ta = list(data.top_asns);
+      countries.body.replaceChildren(tc.length ? table([
+        { label: 'Country', cls: 'cell-path', render: (r) => filterLink(str(r.code) + (r.name ? ' · ' + r.name : ''), { country: r.code }, 'Show events from ' + str(r.name || r.code)) },
+      ].concat(nums, [{ label: '', cls: 'actions', render: (r) => blockBtn(str(r.code), { id: 'block-' + str(r.code).toLowerCase(), countries: [r.code] }) }]), tc, { class: 'compact', key: (r) => r.code }) : none());
+      regions.body.replaceChildren(trg.length ? table([
+        { label: 'Region', cls: 'cell-path', render: (r) => filterLink(str(r.code) + (r.name && str(r.code).indexOf(':') < 0 ? ' · ' + r.name : ''), { region: r.code }, 'Show events from ' + str(r.name || r.code)) },
+      ].concat(nums, [{ label: '', cls: 'actions', render: (r) => blockBtn(str(r.code), { id: 'block-' + str(r.code).toLowerCase(), regions: [r.code] }) }]), trg, { class: 'compact', key: (r) => r.code }) : none());
+      networks.body.replaceChildren(ta.length ? table([
+        { label: 'Network', cls: 'cell-path', render: (r) => filterLink('AS' + r.asn + (r.org ? ' · ' + r.org : ''), { asn: String(r.asn) }, 'Show events from AS' + r.asn) },
+      ].concat(nums, [{ label: '', cls: 'actions', render: (r) => blockBtn('AS' + r.asn, { id: 'block-as' + r.asn, asns: [r.asn] }) }]), ta, { class: 'compact', key: (r) => r.asn }) : none());
+      const attr = g.attribution ? h('p', { class: 'hint geo-attr', text: g.attribution }) : null;
+      if (attr && (tc.length || ta.length)) networks.body.appendChild(attr);
+    }
     function renderAll() {
       updated.textContent = 'Updated ' + clock(data.now || Date.now()).slice(0, 8);
       bucketNote.textContent = 'requests per ' + fmtDur(data.bucket_ms || 60000).replace(/ 0s$/, '') + ' bucket';
@@ -986,7 +1115,7 @@
       keepFocus(tops, () => {
       ips.body.replaceChildren(tipIps.length ? table([
         { label: 'Client', render: (r) => filterLink(str(r.ip), { ip: r.ip }) },
-        { label: 'Country', render: (r) => str(r.country) || '—' },
+        { label: 'Origin', cls: 'nowrap', render: (r) => originEl(r) },
         { label: 'Requests', num: true, render: (r) => compact(r.count) },
         { label: 'Blocked', num: true, render: (r) => compact(r.blocked) },
         { label: 'Anomaly', render: (r) => anomalyMeter(r.anomaly_score) },
@@ -1007,7 +1136,7 @@
       const codeColor = { '2xx': 'var(--c-pass)', '3xx': 'var(--c-allow)', '4xx': 'var(--c-challenge)', '5xx': 'var(--c-block)' };
       codes.body.replaceChildren(bars(objEntries(data.status_codes).map(([k, v]) => [k, v, codeColor[k]]), 'No responses yet'));
       methods.body.replaceChildren(bars(objEntries(data.methods).sort((a, b) => b[1] - a[1]).slice(0, 8), 'No requests yet'));
-      countries.body.replaceChildren(bars(objEntries(data.countries).sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, v]) => [k || 'unknown', v, 'var(--c-allow)']), 'No geo data (GeoIP may be off)'));
+      renderGeo();
       const ai = data.ai;
       if (!ai || ai.state === 'disabled') aiCard.body.replaceChildren(stateBox('empty', 'AI analysis is disabled.'));
       else aiCard.body.replaceChildren(kv([
@@ -1077,7 +1206,7 @@
     const placeholder = h('tr', null, h('td', { colSpan: 9 }, stateBox('empty', 'Waiting for events from the live stream…')));
     tbody.appendChild(placeholder);
     const tbl = h('table', { class: 'tbl compact live-table' },
-      h('thead', null, h('tr', null, ['Time', 'Action', 'Status', 'Method', 'Request', 'Client', 'Rules', 'Anomaly', 'AI (risk)'].map((t) => h('th', { scope: 'col', text: t })))), tbody);
+      h('thead', null, h('tr', null, ['Time', 'Action', 'Status', 'Request', 'Client', 'Origin', 'Rules', 'Anomaly', 'AI (risk)'].map((t) => h('th', { scope: 'col', text: t })))), tbody);
     const c = card('Stream', { flush: true, sub: 'newest first · last ' + MAX + ' kept' });
     c.body.appendChild(h('div', { class: 'live-wrap table-wrap' }, tbl));
     root.appendChild(c.el);
@@ -1092,9 +1221,9 @@
         h('td', null, timeEl(ev.ts, 'clock')),
         h('td', null, actionBadge(ev.action)),
         h('td', { class: 'num', text: str(ev.status) || '—' }),
-        h('td', { class: 'mono', text: str(ev.method) }),
-        h('td', { class: 'mono cell-path', title: str(ev.host) + str(ev.path) + (ev.query ? '?' + ev.query : '') }, str(ev.path), ev.query ? h('span', { class: 'faint', text: '?' + ev.query }) : null),
-        h('td', { class: 'mono' }, str(ev.client_ip), ev.country ? h('span', { class: 'faint', text: ' ' + ev.country }) : null),
+        h('td', { class: 'mono cell-path', title: str(ev.method) + ' ' + str(ev.host) + str(ev.path) + (ev.query ? '?' + ev.query : '') }, h('span', { class: 'faint', text: str(ev.method) + ' ' }), str(ev.path), ev.query ? h('span', { class: 'faint', text: '?' + ev.query }) : null),
+        h('td', { class: 'mono', text: str(ev.client_ip) }),
+        h('td', { class: 'mono' }, originEl(ev)),
         h('td', { class: 'mono cell-path', text: Array.isArray(ev.rules) && ev.rules.length ? ev.rules.join(', ') : '—' }),
         h('td', null, anomalyText(ev.anomaly_score)),
         h('td', null, aiBadge(ev.ai, true)));
@@ -1161,20 +1290,23 @@
   };
 
   // ---- view: events (virtualized)
-  const FILTERS = ['action', 'ip', 'path', 'rule', 'q', 'min_anomaly', 'ai_category'];
+  const FILTERS = ['action', 'ip', 'country', 'region', 'asn', 'path', 'rule', 'q', 'min_anomaly', 'ai_category'];
   VIEWS.events = function (root, params, ctx) {
     const F = {};
     for (const k of FILTERS) F[k] = params.get(k) || '';
     const inputs = {
       action: select([['', 'Any action']].concat(ACTIONS.map((a) => [a, a])), F.action),
       ip: h('input', { type: 'text', value: F.ip, placeholder: '203.0.113.5', spellcheck: false, autocomplete: 'off' }),
+      country: h('input', { type: 'text', value: F.country, placeholder: 'ID', maxLength: 2, spellcheck: false, autocomplete: 'off' }),
+      region: h('input', { type: 'text', value: F.region, placeholder: 'ID-JK or ID:Jakarta', maxLength: 84, spellcheck: false, autocomplete: 'off' }),
+      asn: h('input', { type: 'text', value: F.asn, placeholder: 'AS13335', maxLength: 12, spellcheck: false, autocomplete: 'off' }),
       path: h('input', { type: 'text', value: F.path, placeholder: '/login', spellcheck: false, autocomplete: 'off' }),
       rule: h('input', { type: 'text', value: F.rule, placeholder: 'block-sqli-args', spellcheck: false, autocomplete: 'off' }),
       q: h('input', { type: 'search', value: F.q, placeholder: 'Search text', spellcheck: false, autocomplete: 'off' }),
       min_anomaly: h('input', { type: 'number', value: F.min_anomaly, min: 0, max: 1, step: 0.05, placeholder: '0.5' }),
       ai_category: select([['', 'Any AI verdict']].concat(AI_CATEGORIES.map((a) => [a, a])), F.ai_category),
     };
-    const labels = { action: 'Action', ip: 'Client IP', path: 'Path', rule: 'Rule', q: 'Text', min_anomaly: 'Min anomaly', ai_category: 'AI category' };
+    const labels = { action: 'Action', ip: 'Client IP', country: 'Country', region: 'Region', asn: 'Network (ASN)', path: 'Path', rule: 'Rule', q: 'Text', min_anomaly: 'Min anomaly', ai_category: 'AI category' };
     const form = h('form', { class: 'filter-grid', role: 'search', 'aria-label': 'Filter events' },
       FILTERS.map((k) => field(labels[k], inputs[k])),
       h('div', { class: 'filter-actions' },
@@ -1198,7 +1330,7 @@
     root.append(fc.el);
 
     const ROW = 36, OVER = 8;
-    const COLS = ['Time', 'Action', 'Status', 'Method', 'Request', 'Client', 'Rules', 'Anomaly', 'AI (risk)', 'Label'];
+    const COLS = ['Time', 'Action', 'Status', 'Request', 'Client', 'Origin', 'Rules', 'Anomaly', 'AI (risk)', 'Label'];
     const vbody = h('div', { class: 'vbody', role: 'rowgroup' });
     const vhead = h('div', { class: 'vhead', role: 'row' }, COLS.map((t) => h('div', { role: 'columnheader', text: t })));
     const inner = h('div', { class: 'vlist-inner', role: 'table', 'aria-label': 'Events', 'aria-rowcount': '-1' }, vhead, vbody);
@@ -1211,14 +1343,14 @@
 
     let rows = [], next = null, loading = false, done = false, err = null, selected = null, rafId = 0;
     function cellsFor(ev) {
-      const req = h('div', { class: 'mono', role: 'cell', title: str(ev.host) + str(ev.path) + (ev.query ? '?' + ev.query : '') }, str(ev.path), ev.query ? h('span', { class: 'faint', text: '?' + ev.query }) : null);
+      const req = h('div', { class: 'mono', role: 'cell', title: str(ev.method) + ' ' + str(ev.host) + str(ev.path) + (ev.query ? '?' + ev.query : '') }, h('span', { class: 'faint', text: str(ev.method) + ' ' }), str(ev.path), ev.query ? h('span', { class: 'faint', text: '?' + ev.query }) : null);
       return [
         h('div', { role: 'cell' }, timeEl(ev.ts, 'clock')),
         h('div', { role: 'cell' }, actionBadge(ev.action)),
         h('div', { role: 'cell', class: 'num', text: str(ev.status) || '—' }),
-        h('div', { role: 'cell', class: 'mono', text: str(ev.method) }),
         req,
-        h('div', { role: 'cell', class: 'mono' }, str(ev.client_ip), ev.country ? h('span', { class: 'faint', text: ' ' + ev.country }) : null),
+        h('div', { role: 'cell', class: 'mono', text: str(ev.client_ip) }),
+        h('div', { role: 'cell', class: 'mono' }, originEl(ev)),
         h('div', { role: 'cell', class: 'mono', text: Array.isArray(ev.rules) && ev.rules.length ? ev.rules.join(', ') : '—' }),
         h('div', { role: 'cell' }, anomalyText(ev.anomaly_score)),
         h('div', { role: 'cell' }, aiBadge(ev.ai, true)),
@@ -1436,10 +1568,12 @@
     const cs = section('Client');
     const clientIp = str(cl.ip || ev.client_ip);
     cs.appendChild(kv([
-      ['IP', clientIp], ['Country', str(ev.country) || '—'], ['First seen', timeEl(cl.first_seen)], ['Requests', full(cl.requests)],
+      ['IP', clientIp], ['Location', locationText(ev)], ['Network', ev.asn ? 'AS' + ev.asn + (ev.as_org ? ' · ' + ev.as_org : '') : '—'], ['First seen', timeEl(cl.first_seen)], ['Requests', full(cl.requests)],
       ['Blocked', full(cl.blocked)], ['Anomaly', anomalyMeter(cl.anomaly_score)], ['Blocked now', cl.blocked_now ? h('span', { class: 'badge act-block', text: 'yes · dynamic block active' }) : 'no'],
     ]));
-    const cb = h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn btn-sm', onclick: () => { closeDrawer(); go('events', { ip: clientIp }); } }, icon('filter'), 'Events from this IP'));
+    const cb = h('div', { class: 'row' }, h('button', { type: 'button', class: 'btn btn-sm', onclick: () => { closeDrawer(); go('events', { ip: clientIp }); } }, icon('filter'), 'Events from this IP'),
+      ev.country ? h('button', { type: 'button', class: 'btn btn-sm', onclick: () => { closeDrawer(); go('events', { country: ev.country }); } }, icon('filter'), 'From ' + str(ev.country)) : null,
+      ev.asn ? h('button', { type: 'button', class: 'btn btn-sm', onclick: () => { closeDrawer(); go('events', { asn: String(ev.asn) }); } }, icon('filter'), 'From AS' + ev.asn) : null);
     cb.style.marginTop = '8px';
     cs.appendChild(cb);
     out.push(cs);
@@ -1644,6 +1778,50 @@
     const blocks = card('Dynamic IP blocks', { flush: true });
     const allows = card('IP allows', { flush: true });
     root.appendChild(h('div', { class: 'grid grid-2' }, blocks.el, allows.el));
+    const geo = card('Geo and network rules', { flush: true, sub: 'run before every other rule' });
+    geo.el.style.marginTop = 'var(--gap)';
+    root.appendChild(geo.el);
+    if (can('admin')) {
+      const add = h('button', { type: 'button', class: 'btn btn-sm btn-primary', text: 'Add rule…' });
+      add.addEventListener('click', async () => { if (await geoRuleDialog(null)) loadGeo(); });
+      geo.head.appendChild(add);
+    }
+    const placesOf = (r) => [].concat(r.countries || [], r.regions || [], (r.asns || []).map((a) => 'AS' + a)).join(', ');
+    async function loadGeo() {
+      try {
+        const d = await api('/api/geo');
+        if (!ctx.alive) return;
+        const rules = Array.isArray(d.rules) ? d.rules : [];
+        const body = [];
+        if (d.status && d.status.loaded === false) body.push(h('div', { class: 'callout callout-warn flush-callout' }, icon('eye'), h('span', null, 'No location database is loaded: geo rules match nothing and the Origin column stays empty. ',
+          can('admin') ? h('a', { href: '#/settings?tab=geo', text: 'Set one up' }) : 'An admin can set one up under Settings.')));
+        if (!rules.length) body.push(stateBox('empty', 'No geo rules. Block or challenge countries, regions (e.g. ID-JK) or networks (AS numbers), or allow only the places you serve.'));
+        else body.push(table([
+          { label: 'Name', cls: 'cell-path', render: (r) => h('span', { title: str(r.description) }, h('span', { class: 'mono', text: str(r.id) }), r.description ? h('span', { class: 'faint', text: ' · ' + r.description }) : null) },
+          { label: 'Applies to', cls: 'nowrap', render: (r) => r.mode === 'allow_only' ? 'Everywhere except' : 'From' },
+          { label: 'Places and networks', cls: 'cell-path', render: (r) => h('span', { class: 'mono', text: placesOf(r), title: placesOf(r) }) },
+          { label: 'Action', render: (r) => r.action === 'log' ? h('span', { class: 'badge plain', text: 'log only' }) : actionBadge(r.action) },
+          { label: 'Status', render: (r) => r.enabled === false ? stBadge('disabled') : stBadge('active', 'enabled') },
+          { label: '', cls: 'actions', render: (r) => {
+            if (!can('admin')) return '';
+            const edit = h('button', { type: 'button', class: 'btn btn-sm', text: 'Edit', 'aria-label': 'Edit geo rule ' + str(r.id) });
+            edit.addEventListener('click', async () => { if (await geoRuleDialog(r)) loadGeo(); });
+            const del = h('button', { type: 'button', class: 'btn btn-sm', text: 'Delete', 'aria-label': 'Delete geo rule ' + str(r.id) });
+            del.addEventListener('click', async () => {
+              let res = null;
+              const ok = await modal({ title: 'Delete geo rule', ok: 'Delete', danger: true,
+                body: h('p', null, 'Delete ', h('code', { text: str(r.id) }), '? Requests it matched will be let through. This creates a new policy version.'),
+                action: async () => { try { res = await api('/api/geo/rules', { method: 'PUT', body: { rules: rules.filter((x) => x.id !== r.id) } }); geoSaved(res); } catch (e) { return e.status === 401 ? undefined : e.message; } } });
+              if (ok) loadGeo();
+            });
+            return h('span', null, edit, del);
+          } },
+        ], rules, { class: 'compact', key: (r) => r.id }));
+        keepFocus(geo.body, () => geo.body.replaceChildren.apply(geo.body, body));
+      } catch (e) { if (ctx.alive && e.status !== 401) geo.body.replaceChildren(stateBox('error', e.message)); }
+    }
+    geo.body.appendChild(stateBox('loading', 'Loading…'));
+    loadGeo();
     const countdowns = [];
     let reloadSoon = 0;
     if (op) { addButton(blocks, 'block'); addButton(allows, 'allow'); }
@@ -2169,7 +2347,7 @@
 
   VIEWS.settings = function (root, params, ctx) {
     if (!can('admin')) { root.append(pageHead('Settings'), stateBox('locked', 'Settings are for admins only.')); return; }
-    const TABS = [['ai', 'AI'], ['challenge', 'Challenge'], ['users', 'Users & tokens'], ['storage', 'Event storage'], ['security', 'Security']];
+    const TABS = [['ai', 'AI'], ['challenge', 'Challenge'], ['users', 'Users & tokens'], ['storage', 'Event storage'], ['geo', 'Geo data'], ['security', 'Security']];
     let tab = params.get('tab') || (S.me && S.me.setup_mode ? 'users' : 'ai');
     if (!TABS.some((t) => t[0] === tab)) tab = 'ai';
     const body = h('div', { class: 'settings-body' });
@@ -2188,7 +2366,7 @@
     }
     function render() {
       if (!data) return;
-      const fn = { ai: aiCard, challenge: challengeCard, users: usersCard, storage: storageCard, security: () => h('div', { class: 'stack' }, securityCard(), passkeyCard()) }[tab];
+      const fn = { ai: aiCard, challenge: challengeCard, users: usersCard, storage: storageCard, geo: geoCard, security: () => h('div', { class: 'stack' }, securityCard(), passkeyCard()) }[tab];
       body.replaceChildren(fn());
     }
 
@@ -2386,6 +2564,67 @@
       });
       reset.addEventListener('click', () => act(reset, async () => { await api('/api/settings/storage', { method: 'DELETE' }); toast('Storage settings reset to the config file.', 'ok'); await load(); }));
       c.body.appendChild(form);
+      return c.el;
+    }
+
+    function geoCard() {
+      const c = card('IP location and network data');
+      const badge = h('span', { class: 'badge plain' });
+      c.head.appendChild(badge);
+      const state = h('div');
+      const city = h('input', { type: 'text', spellcheck: false, autocomplete: 'off' });
+      const asn = h('input', { type: 'text', spellcheck: false, autocomplete: 'off' });
+      const auto = checkbox('Update monthly from DB-IP', false, 'Downloads the free DB-IP Lite editions from download.db-ip.com into the data folder (geo/) when they are over a month old, and uses them. Off: nothing is downloaded unless you click below.');
+      const save = h('button', { type: 'submit', class: 'btn btn-primary', text: 'Save' });
+      const reset = h('button', { type: 'button', class: 'btn', text: 'Reset to config file' });
+      const dl = h('button', { type: 'button', class: 'btn' }, icon('download'), 'Download DB-IP Lite now');
+      let poll = 0, first = true;
+      async function load() {
+        try {
+          const d = await api('/api/geo');
+          const s = d.status || {};
+          badge.textContent = s.loaded ? 'Loaded' : 'Not loaded';
+          badge.className = 'badge ' + (s.loaded ? 'st-ok' : 'st-pending');
+          if (first && s.settings) { city.value = s.settings.city_mmdb; asn.value = s.settings.asn_mmdb; auto.box.checked = !!s.settings.auto_update; first = false; }
+          reset.hidden = !s.custom;
+          const dbs = Array.isArray(s.databases) ? s.databases : [];
+          const f = s.files || {};
+          const fileLine = (x) => x && x.exists ? fmtBytes(x.bytes) + ', changed ' + absTime(x.modified_ts) : 'missing';
+          const rows = dbs.map((db) => [db.kind === 'asn' ? 'Network (ASN) database' : 'Location database',
+            str(db.database_type) + ', built ' + absTime(db.build_epoch * 1000) + ', IPv' + db.ip_version]);
+          if (!dbs.length) rows.push(['Databases', 'None loaded: the Origin column stays empty and geo rules match nothing']);
+          rows.push(['Location file', fileLine(f.location)], ['Network file', fileLine(f.asn)]);
+          if (s.last_update) rows.push(['Last download', absTime(s.last_update.ts) + ': ' + str(s.last_update.result)]);
+          const kids = [];
+          if (s.error) kids.push(h('div', { class: 'callout callout-warn' }, icon('eye'), h('span', { text: 'Last load failed, previous data kept: ' + s.error })));
+          if (s.updating) kids.push(h('div', { class: 'callout', role: 'status' }, icon('download'), h('span', { text: 'Downloading DB-IP Lite… this can take a minute.' })));
+          kids.push(kv(rows));
+          state.replaceChildren.apply(state, kids);
+          dl.disabled = !!s.updating;
+          clearTimeout(poll);
+          if (s.updating && ctxAlive()) poll = setTimeout(load, 2000);
+        } catch (e) { if (e.status !== 401) state.replaceChildren(stateBox('error', e.message)); }
+      }
+      const ctxAlive = () => c.el.isConnected;
+      const form = h('form', { class: 'settings-form', 'aria-label': 'Geo data files' },
+        h('div', { class: 'grid grid-2' }, field('Location database (City or Country, .mmdb)', city), field('Network database (ASN, .mmdb)', asn)),
+        auto.el,
+        h('div', { class: 'row form-actions' }, save, reset, dl));
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        act(save, async () => {
+          await api('/api/settings/geo', { method: 'PUT', body: { city_mmdb: city.value.trim(), asn_mmdb: asn.value.trim(), auto_update: auto.box.checked } });
+          toast('Geo data settings saved and reloaded.', 'ok');
+          await load();
+        });
+      });
+      reset.addEventListener('click', () => act(reset, async () => { await api('/api/settings/geo', { method: 'DELETE' }); first = true; toast('Geo data settings reset to the config file.', 'ok'); await load(); }));
+      dl.addEventListener('click', () => act(dl, async () => { await api('/api/geo/update', { method: 'POST' }); toast('Download started.', 'ok'); await load(); }));
+      state.className = 'geo-state';
+      c.body.append(state, form,
+        h('p', { class: 'hint spaced', text: 'Lookups are local: no address leaves the server. Works with DB-IP Lite (CC BY 4.0, "IP geolocation by DB-IP") or MaxMind GeoLite2 files kept current with geoipupdate. Files are re-read within a minute of changing; replace them by renaming a finished file over the old one.' }));
+      state.appendChild(stateBox('loading', 'Loading…'));
+      load();
       return c.el;
     }
 

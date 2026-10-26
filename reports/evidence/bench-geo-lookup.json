@@ -1,0 +1,816 @@
+{
+  "meta": {
+    "tag": "geo-lookup",
+    "time": "2026-10-26T01:57:18Z",
+    "machine": "arm64 macOS-26.5-arm64-arm-64bit",
+    "cpu_count": 10,
+    "rounds": 5,
+    "duration_s": 10,
+    "connections": 64,
+    "proxy_workers": 4,
+    "baseline_bin": null,
+    "geo": {
+      "city": "/private/tmp/claude-501/-Users-alfi-Documents-GitHub-openshield/94d8ed58-437d-4860-ae01-272d367ec078/scratchpad/geo/dbip-city-lite.mmdb",
+      "asn": "/private/tmp/claude-501/-Users-alfi-Documents-GitHub-openshield/94d8ed58-437d-4860-ae01-272d367ec078/scratchpad/geo/dbip-asn-lite.mmdb",
+      "client_ip": "36.68.10.1"
+    },
+    "method": "variants interleaved per round, order rotated each round; medians across rounds",
+    "git": "3473a66"
+  },
+  "summary": [
+    {
+      "scenario": "direct_upstream_get",
+      "variant": "upstream_direct",
+      "n": 5,
+      "rps": 101829.46721725064,
+      "p50_ms": 0.360125,
+      "p95_ms": 1.812416,
+      "p99_ms": 5.209334,
+      "cpu_pct_avg": null,
+      "rss_mb_max": null,
+      "rps_min": 88640.06762778058,
+      "rps_max": 110808.85245688599
+    },
+    {
+      "scenario": "proxy_norules_get",
+      "variant": "intel_geo_off",
+      "n": 5,
+      "rps": 24149.147129448516,
+      "p50_ms": 2.0466249999999997,
+      "p95_ms": 6.437458,
+      "p99_ms": 11.573958000000001,
+      "cpu_pct_avg": 213.46,
+      "rss_mb_max": 71.5625,
+      "rps_min": 22159.90148137335,
+      "rps_max": 24495.165364164175
+    },
+    {
+      "scenario": "proxy_norules_get",
+      "variant": "intel_geo_on",
+      "n": 5,
+      "rps": 21955.89589346837,
+      "p50_ms": 2.226792,
+      "p95_ms": 6.833125,
+      "p99_ms": 11.905166,
+      "cpu_pct_avg": 215.925,
+      "rss_mb_max": 203.140625,
+      "rps_min": 21209.82897035082,
+      "rps_max": 23910.0051086604
+    },
+    {
+      "scenario": "proxy_rules_benign_get",
+      "variant": "intel_geo_off",
+      "n": 5,
+      "rps": 19193.630791507614,
+      "p50_ms": 2.610625,
+      "p95_ms": 7.98125,
+      "p99_ms": 13.414208,
+      "cpu_pct_avg": 222.24,
+      "rss_mb_max": 72.390625,
+      "rps_min": 18408.286033237488,
+      "rps_max": 30931.417297378583
+    },
+    {
+      "scenario": "proxy_rules_benign_get",
+      "variant": "intel_geo_on",
+      "n": 5,
+      "rps": 18884.855901868606,
+      "p50_ms": 2.6600420000000002,
+      "p95_ms": 7.708709,
+      "p99_ms": 13.482458,
+      "cpu_pct_avg": 222.065,
+      "rss_mb_max": 197.90625,
+      "rps_min": 16899.464377902445,
+      "rps_max": 28103.214333338154
+    },
+    {
+      "scenario": "proxy_rules_attack_get",
+      "variant": "intel_geo_off",
+      "n": 5,
+      "rps": 36375.23804964476,
+      "p50_ms": 1.2934590000000001,
+      "p95_ms": 4.359083,
+      "p99_ms": 8.253290999999999,
+      "cpu_pct_avg": 225.765,
+      "rss_mb_max": 89.984375,
+      "rps_min": 30329.734042609005,
+      "rps_max": 39463.04170379799
+    },
+    {
+      "scenario": "proxy_rules_attack_get",
+      "variant": "intel_geo_on",
+      "n": 5,
+      "rps": 34657.42082961328,
+      "p50_ms": 1.4220000000000002,
+      "p95_ms": 4.520208,
+      "p99_ms": 8.132709,
+      "cpu_pct_avg": 244.54761904761904,
+      "rss_mb_max": 215.84375,
+      "rps_min": 28898.409775276006,
+      "rps_max": 41773.59941044723
+    },
+    {
+      "scenario": "proxy_rules_form_post",
+      "variant": "intel_geo_off",
+      "n": 5,
+      "rps": 13407.1183106724,
+      "p50_ms": 3.977792,
+      "p95_ms": 10.498291,
+      "p99_ms": 16.121582999999998,
+      "cpu_pct_avg": 246.97,
+      "rss_mb_max": 69.96875,
+      "rps_min": 12020.756994570633,
+      "rps_max": 14171.734413990762
+    },
+    {
+      "scenario": "proxy_rules_form_post",
+      "variant": "intel_geo_on",
+      "n": 5,
+      "rps": 11936.498973787953,
+      "p50_ms": 4.373875,
+      "p95_ms": 11.912,
+      "p99_ms": 18.852583,
+      "cpu_pct_avg": 233.875,
+      "rss_mb_max": 197.5,
+      "rps_min": 10398.379255564347,
+      "rps_max": 14987.931875913513
+    }
+  ],
+  "runs": [
+    {
+      "round": 0,
+      "scenario": "direct_upstream_get",
+      "variant": "upstream_direct",
+      "rps": 101829.46721725064,
+      "success_rate": 1.0,
+      "p50_ms": 0.360125,
+      "p95_ms": 1.812416,
+      "p99_ms": 4.823666,
+      "cpu_pct_avg": null,
+      "rss_mb_max": null,
+      "status_codes": {
+        "200": 1018685
+      }
+    },
+    {
+      "round": 0,
+      "scenario": "proxy_norules_get",
+      "variant": "intel_geo_off",
+      "rps": 24479.765658240307,
+      "success_rate": 1.0,
+      "p50_ms": 1.9833329999999998,
+      "p95_ms": 6.5982080000000005,
+      "p99_ms": 11.211958,
+      "cpu_pct_avg": 221.115,
+      "rss_mb_max": 74.9375,
+      "status_codes": {
+        "200": 244808
+      }
+    },
+    {
+      "round": 0,
+      "scenario": "proxy_norules_get",
+      "variant": "intel_geo_on",
+      "rps": 23910.0051086604,
+      "success_rate": 1.0,
+      "p50_ms": 2.104041,
+      "p95_ms": 6.321708,
+      "p99_ms": 10.986625,
+      "cpu_pct_avg": 228.35,
+      "rss_mb_max": 197.6875,
+      "status_codes": {
+        "200": 239128
+      }
+    },
+    {
+      "round": 0,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "intel_geo_off",
+      "rps": 18410.949092259852,
+      "success_rate": 1.0,
+      "p50_ms": 2.762875,
+      "p95_ms": 8.119958,
+      "p99_ms": 13.876917,
+      "cpu_pct_avg": 206.61,
+      "rss_mb_max": 74.046875,
+      "status_codes": {
+        "200": 184187
+      }
+    },
+    {
+      "round": 0,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "intel_geo_on",
+      "rps": 16899.464377902445,
+      "success_rate": 1.0,
+      "p50_ms": 3.094833,
+      "p95_ms": 8.601833,
+      "p99_ms": 13.347084,
+      "cpu_pct_avg": 205.645,
+      "rss_mb_max": 198.171875,
+      "status_codes": {
+        "200": 169018
+      }
+    },
+    {
+      "round": 0,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "intel_geo_off",
+      "rps": 30329.734042609005,
+      "success_rate": 1.0,
+      "p50_ms": 1.693792,
+      "p95_ms": 5.040333,
+      "p99_ms": 8.502708,
+      "cpu_pct_avg": 203.67142857142858,
+      "rss_mb_max": 81.4375,
+      "status_codes": {
+        "403": 303453
+      }
+    },
+    {
+      "round": 0,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "intel_geo_on",
+      "rps": 28898.409775276006,
+      "success_rate": 1.0,
+      "p50_ms": 1.730375,
+      "p95_ms": 5.386875,
+      "p99_ms": 9.596375,
+      "cpu_pct_avg": 208.43333333333334,
+      "rss_mb_max": 209.53125,
+      "status_codes": {
+        "403": 288994
+      }
+    },
+    {
+      "round": 0,
+      "scenario": "proxy_rules_form_post",
+      "variant": "intel_geo_off",
+      "rps": 13654.7552778205,
+      "success_rate": 1.0,
+      "p50_ms": 3.902917,
+      "p95_ms": 10.109791,
+      "p99_ms": 16.029249999999998,
+      "cpu_pct_avg": 246.97,
+      "rss_mb_max": 68.578125,
+      "status_codes": {
+        "200": 136564
+      }
+    },
+    {
+      "round": 0,
+      "scenario": "proxy_rules_form_post",
+      "variant": "intel_geo_on",
+      "rps": 14987.931875913513,
+      "success_rate": 1.0,
+      "p50_ms": 3.627208,
+      "p95_ms": 9.041458,
+      "p99_ms": 14.010417,
+      "cpu_pct_avg": 277.0,
+      "rss_mb_max": 198.328125,
+      "status_codes": {
+        "200": 149872
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "direct_upstream_get",
+      "variant": "upstream_direct",
+      "rps": 102612.62367305279,
+      "success_rate": 1.0,
+      "p50_ms": 0.352375,
+      "p95_ms": 1.7166670000000002,
+      "p99_ms": 5.209334,
+      "cpu_pct_avg": null,
+      "rss_mb_max": null,
+      "status_codes": {
+        "200": 1026635
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "proxy_norules_get",
+      "variant": "intel_geo_on",
+      "rps": 23535.798732833075,
+      "success_rate": 1.0,
+      "p50_ms": 2.192291,
+      "p95_ms": 6.142459000000001,
+      "p99_ms": 10.360125,
+      "cpu_pct_avg": 222.0095238095238,
+      "rss_mb_max": 203.40625,
+      "status_codes": {
+        "200": 235369
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "proxy_norules_get",
+      "variant": "intel_geo_off",
+      "rps": 24149.147129448516,
+      "success_rate": 1.0,
+      "p50_ms": 2.0414589999999997,
+      "p95_ms": 6.386292,
+      "p99_ms": 11.773,
+      "cpu_pct_avg": 213.46,
+      "rss_mb_max": 73.6875,
+      "status_codes": {
+        "200": 241527
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "intel_geo_on",
+      "rps": 28103.214333338154,
+      "success_rate": 1.0,
+      "p50_ms": 1.93775,
+      "p95_ms": 4.683042,
+      "p99_ms": 7.56775,
+      "cpu_pct_avg": 288.15,
+      "rss_mb_max": 216.6875,
+      "status_codes": {
+        "200": 281081
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "intel_geo_off",
+      "rps": 30931.417297378583,
+      "success_rate": 1.0,
+      "p50_ms": 1.774333,
+      "p95_ms": 4.2304580000000005,
+      "p99_ms": 6.841749999999999,
+      "cpu_pct_avg": 291.495,
+      "rss_mb_max": 69.359375,
+      "status_codes": {
+        "200": 309363
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "intel_geo_on",
+      "rps": 41773.59941044723,
+      "success_rate": 1.0,
+      "p50_ms": 1.18175,
+      "p95_ms": 3.7170419999999997,
+      "p99_ms": 6.781291,
+      "cpu_pct_avg": 260.32,
+      "rss_mb_max": 215.84375,
+      "status_codes": {
+        "403": 417857
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "intel_geo_off",
+      "rps": 36211.47725022519,
+      "success_rate": 1.0,
+      "p50_ms": 1.2934590000000001,
+      "p95_ms": 4.564542,
+      "p99_ms": 8.779375,
+      "cpu_pct_avg": 207.19,
+      "rss_mb_max": 88.25,
+      "status_codes": {
+        "403": 362203
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "proxy_rules_form_post",
+      "variant": "intel_geo_on",
+      "rps": 11850.408165784884,
+      "success_rate": 1.0,
+      "p50_ms": 4.404083,
+      "p95_ms": 12.291917,
+      "p99_ms": 18.852583,
+      "cpu_pct_avg": 226.46,
+      "rss_mb_max": 195.796875,
+      "status_codes": {
+        "200": 118482
+      }
+    },
+    {
+      "round": 1,
+      "scenario": "proxy_rules_form_post",
+      "variant": "intel_geo_off",
+      "rps": 12936.536073312736,
+      "success_rate": 1.0,
+      "p50_ms": 4.142333,
+      "p95_ms": 10.715875,
+      "p99_ms": 17.360625000000002,
+      "cpu_pct_avg": 239.025,
+      "rss_mb_max": 70.875,
+      "status_codes": {
+        "200": 129360
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "direct_upstream_get",
+      "variant": "upstream_direct",
+      "rps": 110808.85245688599,
+      "success_rate": 1.0,
+      "p50_ms": 0.351625,
+      "p95_ms": 1.5651249999999999,
+      "p99_ms": 4.131708000000001,
+      "cpu_pct_avg": null,
+      "rss_mb_max": null,
+      "status_codes": {
+        "200": 1108606
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "proxy_norules_get",
+      "variant": "intel_geo_off",
+      "rps": 24495.165364164175,
+      "success_rate": 1.0,
+      "p50_ms": 2.1008329999999997,
+      "p95_ms": 5.967084,
+      "p99_ms": 9.784834,
+      "cpu_pct_avg": 222.77142857142857,
+      "rss_mb_max": 70.484375,
+      "status_codes": {
+        "200": 245006
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "proxy_norules_get",
+      "variant": "intel_geo_on",
+      "rps": 21209.82897035082,
+      "success_rate": 1.0,
+      "p50_ms": 2.364167,
+      "p95_ms": 7.095917,
+      "p99_ms": 11.905166,
+      "cpu_pct_avg": 210.695,
+      "rss_mb_max": 79.765625,
+      "status_codes": {
+        "200": 212124
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "intel_geo_off",
+      "rps": 19913.375408477055,
+      "success_rate": 1.0,
+      "p50_ms": 2.5233339999999997,
+      "p95_ms": 7.629834000000001,
+      "p99_ms": 12.982875,
+      "cpu_pct_avg": 224.63,
+      "rss_mb_max": 72.390625,
+      "status_codes": {
+        "200": 199145
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "intel_geo_on",
+      "rps": 18884.855901868606,
+      "success_rate": 1.0,
+      "p50_ms": 2.6600420000000002,
+      "p95_ms": 7.708709,
+      "p99_ms": 13.927458,
+      "cpu_pct_avg": 222.065,
+      "rss_mb_max": 193.75,
+      "status_codes": {
+        "200": 188845
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "intel_geo_off",
+      "rps": 39463.04170379799,
+      "success_rate": 1.0,
+      "p50_ms": 1.273375,
+      "p95_ms": 3.924709,
+      "p99_ms": 7.2155,
+      "cpu_pct_avg": 247.55238095238096,
+      "rss_mb_max": 89.984375,
+      "status_codes": {
+        "403": 394705
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "intel_geo_on",
+      "rps": 34554.843122092934,
+      "success_rate": 1.0,
+      "p50_ms": 1.4515419999999999,
+      "p95_ms": 4.520208,
+      "p99_ms": 8.132709,
+      "cpu_pct_avg": 244.54761904761904,
+      "rss_mb_max": 217.734375,
+      "status_codes": {
+        "403": 345580
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "proxy_rules_form_post",
+      "variant": "intel_geo_off",
+      "rps": 12020.756994570633,
+      "success_rate": 1.0,
+      "p50_ms": 4.36475,
+      "p95_ms": 11.466000000000001,
+      "p99_ms": 18.566375,
+      "cpu_pct_avg": 236.07,
+      "rss_mb_max": 71.65625,
+      "status_codes": {
+        "200": 120248
+      }
+    },
+    {
+      "round": 2,
+      "scenario": "proxy_rules_form_post",
+      "variant": "intel_geo_on",
+      "rps": 11936.498973787953,
+      "success_rate": 1.0,
+      "p50_ms": 4.373875,
+      "p95_ms": 11.912,
+      "p99_ms": 21.212124999999997,
+      "cpu_pct_avg": 233.875,
+      "rss_mb_max": 192.109375,
+      "status_codes": {
+        "200": 119350
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "direct_upstream_get",
+      "variant": "upstream_direct",
+      "rps": 93630.78637981418,
+      "success_rate": 1.0,
+      "p50_ms": 0.382292,
+      "p95_ms": 1.887,
+      "p99_ms": 5.546834,
+      "cpu_pct_avg": null,
+      "rss_mb_max": null,
+      "status_codes": {
+        "200": 936561
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "proxy_norules_get",
+      "variant": "intel_geo_on",
+      "rps": 21871.1604054197,
+      "success_rate": 1.0,
+      "p50_ms": 2.319667,
+      "p95_ms": 6.833125,
+      "p99_ms": 11.91525,
+      "cpu_pct_avg": 215.925,
+      "rss_mb_max": 203.140625,
+      "status_codes": {
+        "200": 218741
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "proxy_norules_get",
+      "variant": "intel_geo_off",
+      "rps": 22159.90148137335,
+      "success_rate": 1.0,
+      "p50_ms": 2.2497089999999997,
+      "p95_ms": 6.986833,
+      "p99_ms": 11.882083999999999,
+      "cpu_pct_avg": 209.25,
+      "rss_mb_max": 71.5625,
+      "status_codes": {
+        "200": 221592
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "intel_geo_on",
+      "rps": 17095.021430584788,
+      "success_rate": 1.0,
+      "p50_ms": 2.863,
+      "p95_ms": 9.187166999999999,
+      "p99_ms": 15.865542,
+      "cpu_pct_avg": 213.305,
+      "rss_mb_max": 197.234375,
+      "status_codes": {
+        "200": 170936
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "intel_geo_off",
+      "rps": 18408.286033237488,
+      "success_rate": 1.0,
+      "p50_ms": 2.7769169999999996,
+      "p95_ms": 7.98125,
+      "p99_ms": 13.602167,
+      "cpu_pct_avg": 222.24,
+      "rss_mb_max": 69.8125,
+      "status_codes": {
+        "200": 184057
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "intel_geo_on",
+      "rps": 35811.10831534884,
+      "success_rate": 1.0,
+      "p50_ms": 1.4220000000000002,
+      "p95_ms": 4.238582999999999,
+      "p99_ms": 7.70275,
+      "cpu_pct_avg": 255.375,
+      "rss_mb_max": 228.828125,
+      "status_codes": {
+        "403": 358182
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "intel_geo_off",
+      "rps": 36375.23804964476,
+      "success_rate": 1.0,
+      "p50_ms": 1.31775,
+      "p95_ms": 4.359083,
+      "p99_ms": 8.237124999999999,
+      "cpu_pct_avg": 225.765,
+      "rss_mb_max": 97.0,
+      "status_codes": {
+        "403": 363826
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "proxy_rules_form_post",
+      "variant": "intel_geo_on",
+      "rps": 12811.411540809473,
+      "success_rate": 1.0,
+      "p50_ms": 4.138625,
+      "p95_ms": 10.569583,
+      "p99_ms": 17.5025,
+      "cpu_pct_avg": 243.55,
+      "rss_mb_max": 197.5,
+      "status_codes": {
+        "200": 128087
+      }
+    },
+    {
+      "round": 3,
+      "scenario": "proxy_rules_form_post",
+      "variant": "intel_geo_off",
+      "rps": 13407.1183106724,
+      "success_rate": 1.0,
+      "p50_ms": 3.977792,
+      "p95_ms": 10.498291,
+      "p99_ms": 16.121582999999998,
+      "cpu_pct_avg": 253.0,
+      "rss_mb_max": 69.96875,
+      "status_codes": {
+        "200": 134059
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "direct_upstream_get",
+      "variant": "upstream_direct",
+      "rps": 88640.06762778058,
+      "success_rate": 1.0,
+      "p50_ms": 0.372584,
+      "p95_ms": 2.038458,
+      "p99_ms": 6.4915,
+      "cpu_pct_avg": null,
+      "rss_mb_max": null,
+      "status_codes": {
+        "200": 886721
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "proxy_norules_get",
+      "variant": "intel_geo_off",
+      "rps": 23599.72509561463,
+      "success_rate": 1.0,
+      "p50_ms": 2.0466249999999997,
+      "p95_ms": 6.437458,
+      "p99_ms": 11.573958000000001,
+      "cpu_pct_avg": 206.73,
+      "rss_mb_max": 66.046875,
+      "status_codes": {
+        "200": 236212
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "proxy_norules_get",
+      "variant": "intel_geo_on",
+      "rps": 21955.89589346837,
+      "success_rate": 1.0,
+      "p50_ms": 2.226792,
+      "p95_ms": 7.0495410000000005,
+      "p99_ms": 13.164833000000002,
+      "cpu_pct_avg": 207.38,
+      "rss_mb_max": 204.625,
+      "status_codes": {
+        "200": 219737
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "intel_geo_off",
+      "rps": 19193.630791507614,
+      "success_rate": 1.0,
+      "p50_ms": 2.610625,
+      "p95_ms": 8.124915999999999,
+      "p99_ms": 13.414208,
+      "cpu_pct_avg": 207.685,
+      "rss_mb_max": 72.453125,
+      "status_codes": {
+        "200": 191961
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "proxy_rules_benign_get",
+      "variant": "intel_geo_on",
+      "rps": 19849.247604677326,
+      "success_rate": 1.0,
+      "p50_ms": 2.531292,
+      "p95_ms": 7.409167,
+      "p99_ms": 13.482458,
+      "cpu_pct_avg": 235.645,
+      "rss_mb_max": 197.90625,
+      "status_codes": {
+        "200": 198486
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "intel_geo_off",
+      "rps": 37240.37998932385,
+      "success_rate": 1.0,
+      "p50_ms": 1.291666,
+      "p95_ms": 4.307833,
+      "p99_ms": 8.253290999999999,
+      "cpu_pct_avg": 231.935,
+      "rss_mb_max": 100.28125,
+      "status_codes": {
+        "403": 372535
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "proxy_rules_attack_get",
+      "variant": "intel_geo_on",
+      "rps": 34657.42082961328,
+      "success_rate": 1.0,
+      "p50_ms": 1.392417,
+      "p95_ms": 4.645875,
+      "p99_ms": 8.460749999999999,
+      "cpu_pct_avg": 224.13,
+      "rss_mb_max": 200.140625,
+      "status_codes": {
+        "403": 346675
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "proxy_rules_form_post",
+      "variant": "intel_geo_off",
+      "rps": 14171.734413990762,
+      "success_rate": 1.0,
+      "p50_ms": 3.771833,
+      "p95_ms": 9.657542,
+      "p99_ms": 15.304208999999998,
+      "cpu_pct_avg": 258.34000000000003,
+      "rss_mb_max": 69.671875,
+      "status_codes": {
+        "200": 141722
+      }
+    },
+    {
+      "round": 4,
+      "scenario": "proxy_rules_form_post",
+      "variant": "intel_geo_on",
+      "rps": 10398.379255564347,
+      "success_rate": 1.0,
+      "p50_ms": 4.851959,
+      "p95_ms": 14.122625,
+      "p99_ms": 24.789875,
+      "cpu_pct_avg": 217.425,
+      "rss_mb_max": 198.734375,
+      "status_codes": {
+        "200": 104024
+      }
+    }
+  ]
+}

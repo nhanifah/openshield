@@ -77,8 +77,14 @@ struct IpAgg {
     count: u64,
     blocked: u64,
     country: Option<String>,
+    region: Option<String>,
+    asn: Option<u32>,
     anomaly: f64,
 }
+
+/// Where requests came from: country, ISO 3166-2 region, ASN.
+type PlaceKey = (Option<String>, Option<String>, Option<u32>);
+const PLACE_CAP: usize = 2000;
 
 #[derive(Clone, Default)]
 struct Block {
@@ -89,12 +95,45 @@ struct Block {
     status: [u64; 6],
     methods: HashMap<String, u64>,
     countries: HashMap<String, u64>,
+    /// (requests, blocked) per place, for top lists and geo-rule impact.
+    places: HashMap<PlaceKey, (u64, u64)>,
 }
 
 pub struct Stats {
     secs: Vec<Slot>,
     mins: Vec<Slot>,
     blocks: Vec<Block>,
+    /// Display names for country and region codes, and AS organizations.
+    names: HashMap<String, String>,
+    orgs: HashMap<u32, String>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TopPlace {
+    pub code: String,
+    pub name: Option<String>,
+    pub count: u64,
+    pub blocked: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct TopAsn {
+    pub asn: u32,
+    pub org: Option<String>,
+    pub count: u64,
+    pub blocked: u64,
+}
+
+/// Share of recent traffic a geo rule would act on.
+#[derive(Debug, Clone, Serialize)]
+pub struct GeoImpact {
+    pub window_ms: i64,
+    pub total: u64,
+    pub matched: u64,
+    pub matched_blocked_already: u64,
+    pub clients: u64,
+    /// True when some places or clients were beyond what the statistics keep.
+    pub approximate: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -115,6 +154,9 @@ pub struct TopIp {
     pub count: u64,
     pub blocked: u64,
     pub country: Option<String>,
+    pub region: Option<String>,
+    pub asn: Option<u32>,
+    pub as_org: Option<String>,
     pub anomaly_score: f64,
 }
 
@@ -153,6 +195,9 @@ pub struct Overview {
     pub status_codes: HashMap<String, u64>,
     pub methods: HashMap<String, u64>,
     pub countries: HashMap<String, u64>,
+    pub top_countries: Vec<TopPlace>,
+    pub top_regions: Vec<TopPlace>,
+    pub top_asns: Vec<TopAsn>,
 }
 
 /// Is this event "suspicious" for the counters: anomalous, or an AI verdict
@@ -177,6 +222,8 @@ impl Stats {
             secs: vec![Slot::default(); SEC_SLOTS],
             mins: vec![Slot::default(); MIN_SLOTS],
             blocks: vec![Block::default(); BLOCK_SLOTS],
+            names: HashMap::new(),
+            orgs: HashMap::new(),
         }
     }
 
@@ -218,6 +265,8 @@ impl Stats {
             a.blocked += blocked;
             if a.country.is_none() {
                 a.country = ev.country.clone();
+                a.region = ev.loc.region.clone();
+                a.asn = ev.asn;
             }
             a.anomaly = a.anomaly.max(ev.anomaly.score);
         }
@@ -238,6 +287,62 @@ impl Stats {
             && let Some(n) = capped(&mut b.countries, country, 300)
         {
             *n += 1;
+        }
+        if ev.country.is_some() || ev.asn.is_some() {
+            let key = (ev.country.clone(), ev.loc.region.clone(), ev.asn);
+            if b.places.len() < PLACE_CAP || b.places.contains_key(&key) {
+                let e = b.places.entry(key).or_default();
+                e.0 += 1;
+                e.1 += blocked;
+            }
+        }
+        if self.names.len() < 20_000 {
+            if let (Some(c), Some(n)) = (&ev.country, &ev.loc.country_name) {
+                self.names.entry(c.clone()).or_insert_with(|| n.clone());
+            }
+            if let (Some(r), Some(n)) = (&ev.loc.region, &ev.loc.region_name) {
+                self.names.entry(r.clone()).or_insert_with(|| n.clone());
+            }
+        }
+        if let (Some(a), Some(o)) = (ev.asn, &ev.loc.as_org)
+            && self.orgs.len() < 20_000
+        {
+            self.orgs.entry(a).or_insert_with(|| o.clone());
+        }
+    }
+
+    /// Requests in the last `window_ms` (24 h at most) that `rule` would act
+    /// on, from the per-place counters.
+    pub fn geo_impact(&self, now: i64, window_ms: i64, rule: &openshield_core::config::GeoRule) -> GeoImpact {
+        let since = now - window_ms.min(BLOCK_MS * BLOCK_SLOTS as i64);
+        let (mut total, mut matched, mut already, mut clients) = (0u64, 0u64, 0u64, 0u64);
+        let mut approximate = false;
+        let mut seen = std::collections::HashSet::new();
+        for b in &self.blocks {
+            if b.start + BLOCK_MS <= since || b.start > now || b.start == 0 {
+                continue;
+            }
+            total += b.status.iter().sum::<u64>();
+            approximate |= b.places.len() >= PLACE_CAP || b.ips.len() >= TOP_CAP;
+            for ((c, r, a), (n, bl)) in &b.places {
+                if rule.matches(c.as_deref(), r.as_deref(), *a) {
+                    matched += n;
+                    already += bl;
+                }
+            }
+            for (ip, agg) in &b.ips {
+                if rule.matches(agg.country.as_deref(), agg.region.as_deref(), agg.asn) && seen.insert(ip.as_str()) {
+                    clients += 1;
+                }
+            }
+        }
+        GeoImpact {
+            window_ms: now - since,
+            total,
+            matched,
+            matched_blocked_already: already,
+            clients,
+            approximate,
         }
     }
 
@@ -319,6 +424,9 @@ impl Stats {
         let mut status = [0u64; 6];
         let mut methods: HashMap<String, u64> = HashMap::new();
         let mut countries: HashMap<String, u64> = HashMap::new();
+        let mut by_country: HashMap<String, (u64, u64)> = HashMap::new();
+        let mut by_region: HashMap<String, (u64, u64)> = HashMap::new();
+        let mut by_asn: HashMap<u32, (u64, u64)> = HashMap::new();
         let since = now - range_ms.min(BLOCK_MS * BLOCK_SLOTS as i64);
         for b in &self.blocks {
             if b.start + BLOCK_MS <= since || b.start > now || b.start == 0 {
@@ -331,6 +439,8 @@ impl Stats {
                 e.anomaly = e.anomaly.max(v.anomaly);
                 if e.country.is_none() {
                     e.country = v.country.clone();
+                    e.region = v.region.clone();
+                    e.asn = v.asn;
                 }
             }
             for (k, v) in &b.paths {
@@ -350,7 +460,38 @@ impl Stats {
             for (k, v) in &b.countries {
                 *countries.entry(k.clone()).or_default() += v;
             }
+            for ((c, r, a), (n, bl)) in &b.places {
+                for (map, key) in [(&mut by_country, c), (&mut by_region, r)] {
+                    if let Some(k) = key {
+                        let e = map.entry(k.clone()).or_default();
+                        e.0 += n;
+                        e.1 += bl;
+                    }
+                }
+                if let Some(a) = a {
+                    let e = by_asn.entry(*a).or_default();
+                    e.0 += n;
+                    e.1 += bl;
+                }
+            }
         }
+        let place_list = |m: HashMap<String, (u64, u64)>| {
+            let mut v: Vec<TopPlace> = m
+                .into_iter()
+                .map(|(code, (count, blocked))| TopPlace { name: self.names.get(&code).cloned(), code, count, blocked })
+                .collect();
+            v.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.code.cmp(&b.code)));
+            v.truncate(20);
+            v
+        };
+        let top_countries = place_list(by_country);
+        let top_regions = place_list(by_region);
+        let mut top_asns: Vec<TopAsn> = by_asn
+            .into_iter()
+            .map(|(asn, (count, blocked))| TopAsn { asn, org: self.orgs.get(&asn).cloned(), count, blocked })
+            .collect();
+        top_asns.sort_by(|a, b| b.count.cmp(&a.count).then_with(|| a.asn.cmp(&b.asn)));
+        top_asns.truncate(20);
         let mut top_ips: Vec<TopIp> = ips
             .into_iter()
             .map(|(ip, a)| TopIp {
@@ -358,6 +499,9 @@ impl Stats {
                 count: a.count,
                 blocked: a.blocked,
                 country: a.country,
+                region: a.region,
+                asn: a.asn,
+                as_org: a.asn.and_then(|n| self.orgs.get(&n).cloned()),
                 anomaly_score: a.anomaly,
             })
             .collect();
@@ -407,6 +551,9 @@ impl Stats {
             status_codes,
             methods,
             countries,
+            top_countries,
+            top_regions,
+            top_asns,
         }
     }
 
@@ -527,5 +674,50 @@ mod tests {
     #[test]
     fn percentile_of_empty_is_none() {
         assert_eq!(percentile(&[0; 28], 0.5), None);
+    }
+
+    #[test]
+    fn places_feed_top_lists_and_geo_impact() {
+        use openshield_core::config::{Action, GeoMode, GeoRule};
+        let mut st = Stats::new();
+        let now = 1_700_000_000_000;
+        let place = |ip: &str, c: &str, r: &str, a: u32, action: &str| {
+            let mut e = ev(now - 5000, action, ip, 1.0);
+            e.country = Some(c.into());
+            e.asn = Some(a);
+            e.loc.region = Some(r.into());
+            e.loc.country_name = Some(if c == "ID" { "Indonesia" } else { "China" }.into());
+            e.loc.as_org = Some(format!("Org {a}"));
+            e
+        };
+        for _ in 0..6 {
+            st.record(&place("203.0.113.1", "ID", "ID-JK", 64500, "pass"));
+        }
+        for _ in 0..3 {
+            st.record(&place("198.51.100.1", "CN", "CN-BJ", 64510, "block"));
+        }
+        st.record(&ev(now - 5000, "pass", "10.0.0.1", 1.0)); // private: no place
+        let ov = st.overview(now, 3_600_000);
+        assert_eq!(ov.top_countries[0].code, "ID");
+        assert_eq!(ov.top_countries[0].name.as_deref(), Some("Indonesia"));
+        assert_eq!((ov.top_countries[1].count, ov.top_countries[1].blocked), (3, 3));
+        assert_eq!(ov.top_regions[0].code, "ID-JK");
+        assert_eq!((ov.top_asns[0].asn, ov.top_asns[0].org.as_deref()), (64500, Some("Org 64500")));
+        assert_eq!(ov.top_ips.iter().find(|i| i.ip == "203.0.113.1").unwrap().region.as_deref(), Some("ID-JK"));
+
+        let only_id = GeoRule {
+            id: "only-id".into(),
+            description: None,
+            enabled: true,
+            mode: GeoMode::AllowOnly,
+            action: Action::Block,
+            countries: vec!["ID".into()],
+            regions: vec![],
+            asns: vec![],
+        };
+        let imp = st.geo_impact(now, 86_400_000, &only_id);
+        assert_eq!((imp.total, imp.matched, imp.matched_blocked_already, imp.clients), (10, 3, 3, 1));
+        let jk = GeoRule { mode: GeoMode::Deny, countries: vec![], regions: vec!["ID-JK".into()], ..only_id };
+        assert_eq!(st.geo_impact(now, 86_400_000, &jk).matched, 6);
     }
 }

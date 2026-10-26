@@ -41,6 +41,9 @@ pub struct SecurityEvent {
     pub client_ip: String,
     pub country: Option<String>,
     pub asn: Option<u32>,
+    /// Names and finer location, from the same lookup as `country`.
+    #[serde(default, flatten)]
+    pub loc: Location,
     pub method: String,
     pub protocol: String,
     pub host: String,
@@ -68,6 +71,25 @@ pub struct SecurityEvent {
     pub label: Option<String>,
 }
 
+/// Where a client is, beyond the country code and ASN.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct Location {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub country_name: Option<String>,
+    /// ISO 3166-2, e.g. `ID-JK`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub city: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub as_org: Option<String>,
+    /// Private, loopback or link-local address: no public location.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub private_ip: bool,
+}
+
 /// The compact form sent to lists and the live stream.
 #[derive(Debug, Clone, Serialize)]
 pub struct EventSummary {
@@ -75,6 +97,14 @@ pub struct EventSummary {
     pub ts: i64,
     pub client_ip: String,
     pub country: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asn: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub as_org: Option<String>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub private_ip: bool,
     pub method: String,
     pub host: String,
     pub path: String,
@@ -110,6 +140,10 @@ impl SecurityEvent {
             ts: self.ts,
             client_ip: self.client_ip.clone(),
             country: self.country.clone(),
+            region: self.loc.region.clone(),
+            asn: self.asn,
+            as_org: self.loc.as_org.clone(),
+            private_ip: self.loc.private_ip,
             method: self.method.clone(),
             host: self.host.clone(),
             path: self.path.clone(),
@@ -251,6 +285,7 @@ pub(crate) mod tests_support {
             client_ip: "203.0.113.5".into(),
             country: None,
             asn: None,
+            loc: Default::default(),
             method: "GET".into(),
             protocol: "HTTP/1.1".into(),
             host: "app.test".into(),

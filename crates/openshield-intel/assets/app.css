@@ -287,8 +287,9 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 
 /* virtual list */
 .vlist { position: relative; overflow: auto; height: calc(100vh - 260px); min-height: 320px; border-top: 1px solid var(--border); }
-.vlist-inner { position: relative; min-width: 1000px; }
-.vhead, .vrow { display: grid; grid-template-columns: 104px 104px 64px 72px minmax(152px, 3fr) minmax(128px, 1fr) minmax(96px, 1.1fr) 80px minmax(148px, 1fr) minmax(92px, .9fr); align-items: center; }
+.vlist-inner { position: relative; min-width: 1110px; }
+/* Time, Action, Status, Request, Client, Origin, Rules, Anomaly, AI, Label. Origin fits "ID-JK · AS4294967295". */
+.vhead, .vrow { display: grid; grid-template-columns: 104px 104px 64px minmax(160px, 3fr) minmax(112px, 1fr) minmax(150px, 1.1fr) minmax(96px, 1fr) 80px minmax(148px, 1fr) minmax(92px, .9fr); align-items: center; }
 .vhead { position: sticky; top: 0; z-index: 2; background: var(--surface-2); border-bottom: 1px solid var(--border); font-size: 11px; color: var(--text-2); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; height: 32px; }
 .vhead > div, .vrow > div { padding: 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .vbody { position: relative; }
@@ -366,6 +367,8 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 @media (max-width: 1180px) {
   .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* Three cards on two columns: the third takes the full row, no orphan. */
+  .grid-3 > .card:nth-child(3):last-child { grid-column: 1 / -1; }
 }
 @media (max-width: 860px) {
   .shell { grid-template-columns: minmax(0, 1fr); }
@@ -485,13 +488,13 @@ details.advanced[open] summary { margin-bottom: 10px; }
 @media (max-width: 1440px) { .policy-grid { grid-template-columns: minmax(0, 1fr); } }
 /* Live stream: fixed column widths; the request column absorbs the slack
    and truncates, so the AI column never falls off the card edge. */
-.live-table { table-layout: fixed; width: 100%; min-width: 1000px; }
+.live-table { table-layout: fixed; width: 100%; min-width: 1060px; }
 .live-table th:nth-child(1) { width: 104px; }
 .live-table th:nth-child(2) { width: 104px; }
 .live-table th:nth-child(3) { width: 62px; }
-.live-table th:nth-child(4) { width: 68px; }
-.live-table th:nth-child(6) { width: 128px; }
-.live-table th:nth-child(7) { width: 128px; }
+.live-table th:nth-child(5) { width: 120px; }
+.live-table th:nth-child(6) { width: 150px; } /* origin */
+.live-table th:nth-child(7) { width: 112px; }
 .live-table th:nth-child(8) { width: 96px; }
 .live-table th:nth-child(9) { width: 148px; } /* fits "suspicious 100%" */
 .live-table td { overflow: hidden; text-overflow: ellipsis; }
@@ -531,3 +534,11 @@ details.advanced[open] summary { margin-bottom: 10px; }
 .pk-main { flex: 1; min-width: 0; }
 .pk-name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .pk-meta { font-size: 12px; color: var(--text-2); }
+
+/* Geo */
+.dialog-grid { gap: 12px 16px; }
+.geo-attr { padding: 8px 14px; margin: 0; border-top: 1px solid var(--border); }
+.flush-callout { margin: 12px 14px 0; }
+.geo-state { margin-bottom: 16px; }
+/* Read-only fields look fixed, not editable. */
+input[readonly]:not([type=checkbox]):not([type=radio]) { background: var(--surface-2); color: var(--text-2); }

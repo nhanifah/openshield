@@ -15,6 +15,7 @@ pub mod config;
 pub mod controls;
 pub mod dataset;
 pub mod event;
+pub mod geo;
 pub mod hub;
 pub mod metrics;
 pub mod policy;

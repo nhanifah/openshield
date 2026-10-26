@@ -16,6 +16,22 @@ pub struct IntelConfig {
     pub events: EventsConfig,
     pub anomaly: AnomalyConfig,
     pub ai: AiConfig,
+    pub geo: GeoConfig,
+}
+
+/// Where the IP location (City/Country) and ASN databases live. Both are
+/// MaxMind DB files: DB-IP Lite (downloadable from the dashboard, CC BY 4.0)
+/// or MaxMind GeoLite2 (kept current with `geoipupdate`).
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct GeoConfig {
+    /// Defaults to `geo/dbip-city-lite.mmdb` next to the database.
+    pub city_mmdb: Option<PathBuf>,
+    /// Defaults to `geo/dbip-asn-lite.mmdb` next to the database.
+    pub asn_mmdb: Option<PathBuf>,
+    /// Download a fresh DB-IP Lite edition when the files are over a month
+    /// old. Off by default: it makes outbound requests to download.db-ip.com.
+    pub auto_update: bool,
 }
 
 impl Default for IntelConfig {
@@ -26,6 +42,7 @@ impl Default for IntelConfig {
             events: EventsConfig::default(),
             anomaly: AnomalyConfig::default(),
             ai: AiConfig::default(),
+            geo: GeoConfig::default(),
         }
     }
 }

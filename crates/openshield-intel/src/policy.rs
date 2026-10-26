@@ -33,6 +33,7 @@ pub const WAF_KEYS: &[&str] = &[
     "log_payloads",
     "redaction",
     "geoip",
+    "geo_access",
     "scores",
     "lists",
     "challenge",
@@ -429,6 +430,7 @@ mod tests {
                 extension: String::new(),
                 headers: vec![],
                 geo: None,
+                allowlisted: false,
             },
             body: vec![],
         }

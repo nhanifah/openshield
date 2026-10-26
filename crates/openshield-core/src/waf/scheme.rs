@@ -59,6 +59,9 @@ pub fn build(score_names: &[String], token_ids: &[String]) -> Scheme {
 
     // fields
     opt!(b, "ip.src", Ip);
+    opt!(b, "ip.src.allowlisted", Bool);
+    opt!(b, "ip.src.has_country", Bool);
+    opt!(b, "ip.src.has_asnum", Bool);
     opt!(b, "ip.src.asnum", Int);
     opt!(b, "ip.src.city", Str);
     opt!(b, "ip.src.continent", Str);

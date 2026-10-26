@@ -8,6 +8,7 @@ use crate::admin::{self, App, auth::Authenticator};
 use crate::ai::sanitize::Sanitizer;
 use crate::config::{AdminConfig, IntelConfig};
 use crate::controls::{Controls, parse_target};
+use crate::geo::{GeoService, GeoSettings};
 use crate::hub::{EventHub, STREAM_MAX};
 use crate::policy::PolicyManager;
 use crate::settings::Settings;
@@ -19,6 +20,8 @@ pub struct Intel {
     pub hub: Arc<EventHub>,
     pub policy: Arc<PolicyManager>,
     pub controls: Arc<Controls>,
+    /// IP location and ASN lookups for the proxy.
+    pub geo: Arc<GeoService>,
     _runtime: tokio::runtime::Runtime,
 }
 
@@ -67,6 +70,40 @@ impl Intel {
         }
 
         let policy = Arc::new(PolicyManager::init(waf_yaml, Some(&store))?);
+
+        // Location databases: optional, re-read when the files change.
+        let data_dir = cfg.store.path.parent().map(|p| p.to_path_buf()).unwrap_or_default();
+        let geo = Arc::new(GeoService::new(GeoSettings::from_config(&cfg.geo, &data_dir), Some(Arc::clone(&store)), data_dir.join("geo")));
+        geo.load(true);
+        if !geo.loaded() {
+            log::warn!("No IP location database loaded: country, region and ASN stay empty and geo rules match nothing. \
+                        Download DB-IP Lite under Settings, Geo data, or point intel.geo at GeoLite2 files.");
+        }
+        {
+            let geo = Arc::clone(&geo);
+            runtime.spawn(async move {
+                let client = reqwest::Client::builder().user_agent("openshield-geo-update").build().ok();
+                let mut tick = tokio::time::interval(Duration::from_secs(60));
+                loop {
+                    tick.tick().await;
+                    let g = Arc::clone(&geo);
+                    let _ = tokio::task::spawn_blocking(move || g.load(false)).await;
+                    if let Some(c) = &client
+                        && geo.update_due()
+                    {
+                        match geo.download_dbip(c).await {
+                            Ok(m) => log::info!("Geo databases: {m}"),
+                            // Retried on the next tick only after a day, so a
+                            // failing mirror is not hammered.
+                            Err(e) => {
+                                log::warn!("Geo database update failed: {e}");
+                                tokio::time::sleep(Duration::from_secs(86_400)).await;
+                            }
+                        }
+                    }
+                }
+            });
+        }
 
         // Per-process key for pseudonymizing client IPs sent to the model and
         // written to datasets.
@@ -125,6 +162,7 @@ impl Intel {
                 dataset_dir,
                 vault_source: vault.source.clone(),
                 passkeys: Default::default(),
+                geo: Arc::clone(&geo),
             });
             let listen = admin_cfg.listen.clone();
             // Bind now so a bad address fails startup instead of logging later.
@@ -141,6 +179,7 @@ impl Intel {
             hub,
             policy,
             controls,
+            geo,
             _runtime: runtime,
         })
     }

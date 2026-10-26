@@ -11,6 +11,11 @@ rounds; compare variants within the same run only.
 Usage:
     python3 tests/bench/ab_bench.py --baseline-bin PATH [--rounds 5] [--duration 10] [--tag ab]
 `--baseline-bin` is an `openshield` binary built from the baseline commit.
+
+Geo lookup cost (current binary only, intel on, client IP from a trusted
+X-Forwarded-For so the lookup is not skipped as a private address):
+    python3 tests/bench/ab_bench.py --geo-city CITY.mmdb --geo-asn ASN.mmdb --tag geo
+compares `intel_geo_off` (no database files) with `intel_geo_on`.
 """
 
 import argparse
@@ -88,7 +93,10 @@ def summarize(res, samples):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--baseline-bin", required=True)
+    ap.add_argument("--baseline-bin")
+    ap.add_argument("--geo-city", help="location .mmdb: run the geo off/on comparison instead")
+    ap.add_argument("--geo-asn", help="ASN .mmdb for the geo comparison")
+    ap.add_argument("--geo-client-ip", default="36.68.10.1", help="public address sent as X-Forwarded-For")
     ap.add_argument("--rounds", type=int, default=5)
     ap.add_argument("--duration", type=int, default=10)
     ap.add_argument("--conns", type=int, default=64)
@@ -97,11 +105,23 @@ def main():
     ap.add_argument("--with-store-all", action="store_true", help="add a variant that stores every request")
     args = ap.parse_args()
 
-    variants = [
-        ("baseline", args.baseline_bin, None),
-        ("current", str(BIN / "openshield"), None),
-        ("current_intel", str(BIN / "openshield"), INTEL),
-    ]
+    xff = []
+    if args.geo_city:
+        geo = "  geo:\n    city_mmdb: \"{}\"\n    asn_mmdb: \"{}\"\n"
+        trusted = 'trusted_proxies: ["127.0.0.1"]\n'
+        variants = [
+            ("intel_geo_off", str(BIN / "openshield"), INTEL + geo.format("/nonexistent/city.mmdb", "/nonexistent/asn.mmdb") + trusted),
+            ("intel_geo_on", str(BIN / "openshield"), INTEL + geo.format(args.geo_city, args.geo_asn) + trusted),
+        ]
+        xff = ["-H", f"X-Forwarded-For: {args.geo_client_ip}"]
+    elif not args.baseline_bin:
+        raise SystemExit("--baseline-bin is required (or use --geo-city/--geo-asn)")
+    else:
+        variants = [
+            ("baseline", args.baseline_bin, None),
+            ("current", str(BIN / "openshield"), None),
+            ("current_intel", str(BIN / "openshield"), INTEL),
+        ]
     if args.with_store_all:
         variants.append(("current_intel_store_all", str(BIN / "openshield"), INTEL_ALL))
     logdir = Path(tempfile.mkdtemp(prefix="openshield-ab-"))
@@ -133,7 +153,7 @@ def main():
                     if free_gb < 3:
                         raise SystemExit(f"stopping: only {free_gb:.1f} GB free on disk")
                     try:
-                        res, samples = run_proxy_scenario(binary, cfg_path, extra, args, rundir)
+                        res, samples = run_proxy_scenario(binary, cfg_path, xff + extra, args, rundir)
                     finally:
                         if intel:
                             # Intel runs write a SQLite store; never leave it behind.
@@ -161,7 +181,7 @@ def main():
         "tag": args.tag, "time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "machine": f"{platform.machine()} {platform.platform()}", "cpu_count": os.cpu_count(),
         "rounds": args.rounds, "duration_s": args.duration, "connections": args.conns, "proxy_workers": args.workers,
-        "baseline_bin": args.baseline_bin, "method": "variants interleaved per round, order rotated each round; medians across rounds",
+        "baseline_bin": args.baseline_bin, "geo": {"city": args.geo_city, "asn": args.geo_asn, "client_ip": args.geo_client_ip} if args.geo_city else None, "method": "variants interleaved per round, order rotated each round; medians across rounds",
         "git": subprocess.run(["git", "rev-parse", "--short", "HEAD"], capture_output=True, text=True, cwd=ROOT).stdout.strip(),
     }
     out = ROOT / "reports" / "evidence" / f"bench-{args.tag}.json"

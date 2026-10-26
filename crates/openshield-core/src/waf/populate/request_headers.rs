@@ -24,6 +24,10 @@ pub fn request_fields(ctx: &mut ExecutionContext<'static>, scheme: &Scheme, req:
     if let Some(ip) = req.client_ip {
         set_field!(ctx, scheme, "ip.src", Ip, ip);
     }
+    set_field!(ctx, scheme, "ip.src.allowlisted", Bool, req.allowlisted);
+    let geo = req.geo.as_ref();
+    set_field!(ctx, scheme, "ip.src.has_country", Bool, geo.is_some_and(|g| g.country.is_some()));
+    set_field!(ctx, scheme, "ip.src.has_asnum", Bool, geo.is_some_and(|g| g.asn.is_some()));
 
     if let Some(ref g) = req.geo {
         if let Some(v) = g.asn {
@@ -342,18 +346,9 @@ mod tests {
     fn eu_flag_follows_geo_data() {
         use crate::waf::data::GeoData;
         let geo = |country: &str, eu: bool| GeoData {
-            asn: None,
             is_in_european_union: eu,
-            city: None,
-            continent: None,
             country: Some(country.into()),
-            lat: None,
-            lon: None,
-            metro_code: None,
-            postal_code: None,
-            region: None,
-            region_code: None,
-            timezone: None,
+            ..Default::default()
         };
 
         let mut req = empty_request();
@@ -369,5 +364,116 @@ mod tests {
         req.geo = Some(geo("GB", false));
         let (scheme, ctx) = populate(&req);
         assert!(check(&scheme, &ctx, "not ip.src.is_in_european_union"));
+    }
+
+    #[test]
+    fn geo_rules_match_as_intended() {
+        use crate::config::{Action, GeoMode, GeoRule};
+        use crate::waf::data::GeoData;
+        let rule = |mode: GeoMode, countries: &[&str], regions: &[&str], asns: &[u32]| GeoRule {
+            id: "t".into(),
+            description: None,
+            enabled: true,
+            mode,
+            action: Action::Block,
+            countries: countries.iter().map(|s| s.to_string()).collect(),
+            regions: regions.iter().map(|s| s.to_string()).collect(),
+            asns: asns.to_vec(),
+        };
+        // `region` is a code ("JK"), or a name when prefixed with "=" ("=Jakarta").
+        let at = |country: Option<&str>, region: Option<&str>, asn: Option<u32>, allowlisted: bool| {
+            let mut req = empty_request();
+            req.allowlisted = allowlisted;
+            if country.is_some() || asn.is_some() {
+                let (code, name) = match region {
+                    Some(r) if r.starts_with('=') => (None, Some(r[1..].to_string())),
+                    Some(r) => (Some(r.to_string()), None),
+                    None => (None, None),
+                };
+                req.geo = Some(GeoData {
+                    country: country.map(String::from),
+                    region_code: code,
+                    region: name,
+                    asn,
+                    ..Default::default()
+                });
+            }
+            req
+        };
+        // The expression and `matches` (used for impact estimates) agree.
+        let hit = |r: &GeoRule, req: &RequestData| {
+            let (scheme, ctx) = populate(req);
+            let by_expr = check(&scheme, &ctx, &r.expression());
+            if !req.allowlisted {
+                let g = req.geo.as_ref();
+                let country = g.and_then(|g| g.country.clone());
+                let region = g.and_then(|g| crate::geoip::region_key(g.country.as_deref(), g.region_code.as_deref(), g.region.as_deref()));
+                let by_fn = r.matches(country.as_deref(), region.as_deref(), g.and_then(|g| g.asn));
+                assert_eq!(by_expr, by_fn, "expression and matches() disagree for {:?}", req.geo);
+            }
+            by_expr
+        };
+
+        let deny_cn = rule(GeoMode::Deny, &["CN"], &[], &[]);
+        assert!(hit(&deny_cn, &at(Some("CN"), None, None, false)));
+        assert!(!hit(&deny_cn, &at(Some("ID"), None, None, false)));
+        assert!(!hit(&deny_cn, &at(None, None, None, false)), "unknown location is not blocked");
+        assert!(!hit(&deny_cn, &at(Some("CN"), None, None, true)), "IP allows win");
+
+        let only_id = rule(GeoMode::AllowOnly, &["ID"], &[], &[]);
+        assert!(!hit(&only_id, &at(Some("ID"), None, None, false)));
+        assert!(hit(&only_id, &at(Some("US"), None, None, false)));
+        assert!(!hit(&only_id, &at(None, None, None, false)), "private or unknown addresses pass");
+        assert!(!hit(&only_id, &at(Some("US"), None, None, true)));
+
+        let jakarta = rule(GeoMode::Deny, &[], &["ID-JK"], &[]);
+        assert!(hit(&jakarta, &at(Some("ID"), Some("JK"), None, false)));
+        assert!(!hit(&jakarta, &at(Some("ID"), Some("JB"), None, false)));
+        assert!(!hit(&jakarta, &at(Some("MY"), Some("JK"), None, false)));
+
+        let by_name = rule(GeoMode::Deny, &[], &["ID:Jakarta"], &[]);
+        assert!(hit(&by_name, &at(Some("ID"), Some("=Jakarta"), None, false)));
+        assert!(!hit(&by_name, &at(Some("ID"), Some("=Bali"), None, false)));
+        assert!(!hit(&by_name, &at(Some("MY"), Some("=Jakarta"), None, false)));
+
+        let asn = rule(GeoMode::Deny, &[], &[], &[64500]);
+        assert!(hit(&asn, &at(Some("US"), None, Some(64500), false)));
+        assert!(!hit(&asn, &at(Some("US"), None, Some(64501), false)));
+        let only_asn = rule(GeoMode::AllowOnly, &[], &[], &[64500]);
+        assert!(hit(&only_asn, &at(None, None, Some(64501), false)));
+        assert!(!hit(&only_asn, &at(None, None, Some(64500), false)));
+        assert!(!hit(&only_asn, &at(Some("US"), None, None, false)), "no ASN data: unknown, left alone");
+    }
+
+    #[test]
+    fn geo_rule_validation() {
+        use crate::config::{Action, GeoMode, GeoRule};
+        let base = GeoRule {
+            id: "only-id".into(),
+            description: None,
+            enabled: true,
+            mode: GeoMode::AllowOnly,
+            action: Action::Block,
+            countries: vec!["ID".into()],
+            regions: vec![],
+            asns: vec![],
+        };
+        assert!(base.validate().is_ok());
+        let bad = |f: &dyn Fn(&mut GeoRule)| {
+            let mut r = base.clone();
+            f(&mut r);
+            r.validate().is_err()
+        };
+        assert!(bad(&|r| r.countries = vec!["id".into()]));
+        assert!(bad(&|r| r.countries = vec!["IDN".into()]));
+        assert!(bad(&|r| r.countries = vec![r#"ID" or "1"#.into()]));
+        assert!(bad(&|r| r.regions = vec!["JK".into()]));
+        assert!(bad(&|r| r.regions = vec![r#"ID:Jak" or "1"#.into()]));
+        assert!(bad(&|r| r.regions = vec!["ID:".into()]));
+        assert!(!bad(&|r| r.regions = vec!["ID:Jakarta".into(), "ID-JK".into()]));
+        assert!(bad(&|r| r.countries.clear()));
+        assert!(bad(&|r| r.action = Action::Allow));
+        assert!(bad(&|r| r.id = "Has Space".into()));
+        assert!(bad(&|r| r.asns = vec![0]));
     }
 }

@@ -14,11 +14,15 @@ pub struct RequestData {
     pub extension: String,
     pub headers: Vec<(String, String)>,
     pub geo: Option<GeoData>,
+    /// The host trusts this address (a dashboard IP allow); geo rules skip it.
+    pub allowlisted: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct GeoData {
     pub asn: Option<u32>,
+    pub as_org: Option<String>,
+    pub country_name: Option<String>,
     pub is_in_european_union: bool,
     pub city: Option<String>,
     pub continent: Option<String>,
@@ -51,6 +55,8 @@ impl From<&crate::geoip::GeoIpLookup> for GeoData {
     fn from(g: &crate::geoip::GeoIpLookup) -> Self {
         Self {
             asn: g.as_num,
+            as_org: g.as_org.clone(),
+            country_name: g.country_name.clone(),
             is_in_european_union: g.is_in_european_union,
             city: g.city.clone(),
             continent: g.continent.clone(),

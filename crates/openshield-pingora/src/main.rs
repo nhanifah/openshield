@@ -188,6 +188,7 @@ fn main() {
         waf: waf_source,
         intel: intel.as_ref().map(|i| Arc::clone(&i.hub)),
         controls: intel.as_ref().map(|i| Arc::clone(&i.controls)),
+        geo: intel.as_ref().map(|i| Arc::clone(&i.geo)),
         logger,
         upstream_tls,
         upstream_host,

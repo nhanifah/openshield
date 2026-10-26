@@ -34,6 +34,11 @@ intel:
   enabled: true
   store:
     path: "__DATA__/intel.db"
+  # Demo location data (documentation ranges only); live_stack.py copies the
+  # test databases here. Point these at DB-IP Lite or GeoLite2 for real data.
+  geo:
+    city_mmdb: "__DATA__/geo/demo-city.mmdb"
+    asn_mmdb: "__DATA__/geo/demo-asn.mmdb"
   anomaly:
     rate_threshold: 30
     scan_404_threshold: 10

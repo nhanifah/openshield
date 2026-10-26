@@ -209,6 +209,10 @@ pub struct EventFilter {
     pub q: Option<String>,
     pub min_anomaly: Option<f64>,
     pub ai_category: Option<String>,
+    /// ISO country code, ISO 3166-2 region code, or AS number.
+    pub country: Option<String>,
+    pub region: Option<String>,
+    pub asn: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -667,6 +671,15 @@ impl Store {
         }
         if let Some(c) = &f.ai_category {
             push("ai_category =", c.clone().into(), false);
+        }
+        if let Some(c) = &f.country {
+            push("json_extract(data, '$.country') =", c.clone().into(), false);
+        }
+        if let Some(r) = &f.region {
+            push("json_extract(data, '$.region') =", r.clone().into(), false);
+        }
+        if let Some(a) = f.asn {
+            push("json_extract(data, '$.asn') =", (a as i64).into(), false);
         }
         sql.push_str(&format!(" ORDER BY ts DESC LIMIT {}", f.limit.clamp(1, 1000)));
         let c = self.read.lock();

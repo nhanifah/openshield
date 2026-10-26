@@ -44,6 +44,10 @@ intel:
     path: "__LOGDIR__/intel.db"
     # The tests look up ordinary requests by id, so store all of them.
     store_all_events: true
+  # Test databases: documentation ranges only (tests/fixtures/geo).
+  geo:
+    city_mmdb: "__ROOT__/tests/fixtures/geo/test-city.mmdb"
+    asn_mmdb: "__ROOT__/tests/fixtures/geo/test-asn.mmdb"
   anomaly:
     window_s: 10
     rate_threshold: 30

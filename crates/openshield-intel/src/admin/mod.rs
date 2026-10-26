@@ -10,6 +10,7 @@
 
 pub mod assets;
 pub mod auth;
+mod geo_api;
 mod passkey_api;
 mod settings_api;
 
@@ -48,6 +49,8 @@ pub struct App {
     pub vault_source: String,
     /// Passkey ceremonies in progress.
     pub passkeys: passkey_api::PasskeyState,
+    /// IP location and ASN databases.
+    pub geo: Arc<crate::geo::GeoService>,
 }
 
 type S = State<Arc<App>>;
@@ -205,6 +208,11 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/users", get(settings_api::list_users).post(settings_api::create_user))
         .route("/api/users/{name}", axum::routing::put(settings_api::set_role).delete(settings_api::delete_user))
         .route("/api/users/{name}/rotate", post(settings_api::rotate_user))
+        .route("/api/geo", get(geo_api::get_geo))
+        .route("/api/geo/impact", post(geo_api::impact))
+        .route("/api/geo/rules", axum::routing::put(geo_api::put_rules))
+        .route("/api/geo/update", post(geo_api::update_now))
+        .route("/api/settings/geo", axum::routing::put(geo_api::put_settings).delete(geo_api::reset_settings))
         .route("/api/passkeys", get(passkey_api::list).post(passkey_api::register))
         .route("/api/passkeys/options", post(passkey_api::register_options))
         .route("/api/passkeys/{id}", delete(passkey_api::remove))
@@ -290,6 +298,11 @@ async fn overview(State(app): S, _c: Caller, Query(q): Query<RangeQ>) -> ApiResu
     let now = now_ms();
     let ov = app.hub.stats.lock().overview(now, parse_range(q.range.as_deref()));
     let mut v = serde_json::to_value(&ov).map_err(ApiError::internal)?;
+    let geo = app.geo.status();
+    let dbip = geo["databases"].as_array().is_some_and(|d| {
+        d.iter().any(|x| x["database_type"].as_str().is_some_and(|t| t.to_ascii_lowercase().contains("dbip")))
+    });
+    v["geo"] = json!({"loaded": geo["loaded"], "attribution": if dbip { Some(crate::geo::DBIP_ATTRIBUTION) } else { None }});
     v["ai"] = match app.hub.ai() {
         Some(ai) => {
             let s = ai.status();
@@ -316,6 +329,9 @@ struct EventsQ {
     q: Option<String>,
     min_anomaly: Option<f64>,
     ai_category: Option<String>,
+    country: Option<String>,
+    region: Option<String>,
+    asn: Option<String>,
 }
 
 fn nonempty(s: Option<String>) -> Option<String> {
@@ -335,6 +351,19 @@ async fn events(State(app): S, _c: Caller, Query(q): Query<EventsQ>) -> ApiResul
         q: nonempty(q.q),
         min_anomaly: q.min_anomaly,
         ai_category: nonempty(q.ai_category),
+        country: nonempty(q.country).map(|c| c.to_ascii_uppercase()),
+        region: nonempty(q.region).map(|c| match c.split_once(':') {
+            Some((cc, name)) => format!("{}:{}", cc.trim().to_ascii_uppercase(), name.trim()),
+            None => c.to_ascii_uppercase(),
+        }),
+        asn: match nonempty(q.asn) {
+            Some(a) => Some(
+                a.trim_start_matches(['A', 'S', 'a', 's'])
+                    .parse()
+                    .map_err(|_| ApiError::bad("asn must be a number such as 13335 or AS13335"))?,
+            ),
+            None => None,
+        },
     };
     let hub = Arc::clone(&app.hub);
     let evs = blocking(move || hub.store.query_events(&f)).await?;
@@ -378,6 +407,7 @@ async fn event_detail(State(app): S, _c: Caller, Path(id): Path<String>) -> ApiR
     {
         verdicts.push(ai.clone());
     }
+    v["location"] = json!(ev.loc);
     v["protocol"] = json!(ev.protocol);
     v["bytes_in"] = json!(ev.bytes_in);
     v["bytes_out"] = json!(ev.bytes_out);

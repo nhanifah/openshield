@@ -59,15 +59,49 @@ tls:
   key: ./key.pem
 ```
 
-## GeoIP
+## Geo data and geo rules
 
-Provide both MaxMind databases to populate GeoIP fields in rule expressions:
+Location (country, region, city) and network (ASN) lookups read MaxMind DB files locally; no address leaves the server. Two free sources work:
+
+- **DB-IP Lite** (CC BY 4.0, attribution "IP geolocation by DB-IP"). Download it from the dashboard (Settings, Geo data) or turn on monthly updates. Its regions have names but no ISO codes, so events show regions as `ID:Jakarta`.
+- **MaxMind GeoLite2** City and ASN, kept current with `geoipupdate`. Regions have ISO codes, shown as `ID-JK`.
+
+With the intelligence layer on, set the files under `intel.geo` (defaults shown). Settings saved in the dashboard replace these until reset:
+
+```yaml
+intel:
+  geo:
+    city_mmdb: <data dir>/geo/dbip-city-lite.mmdb   # City or Country database
+    asn_mmdb: <data dir>/geo/dbip-asn-lite.mmdb
+    auto_update: false   # true: download DB-IP Lite into <data dir>/geo when over a month old
+```
+
+Missing files are not an error: the proxy runs, the location fields stay empty, and geo rules match nothing (fail-open). Files are re-read within a minute of changing; replace a file by renaming a finished one over it. Private, loopback and link-local addresses never get a location. Without the intelligence layer, the WAF's own `geoip` setting (both files required) still works:
 
 ```yaml
 geoip:
   city_mmdb: ./GeoLite2-City.mmdb
   asn_mmdb: ./GeoLite2-ASN.mmdb
 ```
+
+**Geo rules** block, challenge or log requests by country, region or network. They run before every ruleset, and addresses on the dashboard's IP allow list are never matched:
+
+```yaml
+geo_access:
+  rules:
+    - id: only-indonesia
+      mode: allow_only        # act on everything except the places listed
+      action: block           # block, challenge or log
+      countries: [ID]
+    - id: challenge-hosting
+      action: challenge       # mode defaults to deny: act on the places listed
+      asns: [14061, 16509]
+    - id: jakarta-only-log
+      action: log
+      regions: [ID-JK, "ID:Jakarta"]   # ISO 3166-2, or country:name for name-only databases
+```
+
+Requests whose location is unknown (private addresses, or no database) are never matched, also in `allow_only` mode. Each rule becomes a WAF rule `geo:<id>`; in rule expressions the same data is available as `ip.src.country`, `ip.src.region_code`, `ip.src.region`, `ip.src.asnum`, `ip.src.has_country`, `ip.src.has_asnum` and `ip.src.allowlisted`. In the dashboard, rules are edited under Controls; each change is a policy version (audited, reversible, and subject to second-admin approval when that is on), and the dialog estimates how much of the last 24 hours of traffic the rule would have matched.
 
 ## Logs and metrics
 

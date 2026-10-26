@@ -8,7 +8,7 @@
 // The sweep restores the theme and view it started from.
 (async () => {
   const ROUTES = ['overview', 'live', 'events', 'alerts', 'controls', 'policy', 'labels', 'ai', 'audit',
-    'settings?tab=ai', 'settings?tab=challenge', 'settings?tab=users', 'settings?tab=storage', 'settings?tab=security'];
+    'settings?tab=ai', 'settings?tab=challenge', 'settings?tab=users', 'settings?tab=storage', 'settings?tab=geo', 'settings?tab=security'];
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   // A view is ready when it has no skeleton rows or loading boxes left.
   const settled = async () => {

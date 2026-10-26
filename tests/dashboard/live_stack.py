@@ -21,6 +21,7 @@ import json
 import os
 import random
 import secrets
+import shutil
 import signal
 import socket
 import subprocess
@@ -130,8 +131,17 @@ def main():
         os.chmod(data, 0o700)
         cfg_text = (ROOT / "tests" / "dashboard" / "configs" / "local.yaml").read_text().replace("__DATA__", str(data))
         logdir = data
+        # Demo location data: the test databases cover only the documentation
+        # ranges the traffic generator uses. Copies, so a DB-IP download from
+        # the dashboard never overwrites the fixtures.
+        geo = data / "geo"
+        geo.mkdir(exist_ok=True)
+        for src, dst in (("test-city.mmdb", "demo-city.mmdb"), ("test-asn.mmdb", "demo-asn.mmdb")):
+            if not (geo / dst).exists():
+                shutil.copyfile(ROOT / "tests" / "fixtures" / "geo" / src, geo / dst)
     else:
         cfg_text = CFG.read_text().replace("__LOGDIR__", str(logdir))
+    cfg_text = cfg_text.replace("__ROOT__", str(ROOT))
     for name, base in PORTS.items():
         cfg_text = cfg_text.replace(f"127.0.0.1:{base}", f"127.0.0.1:{port(name)}")
     (logdir / "intel.yaml").write_text(cfg_text)

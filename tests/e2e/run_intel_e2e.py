@@ -665,6 +665,105 @@ def t_passkeys(ctx):
                 f"remove={del_st} after_remove={after_remove} audited={audited}")
 
 
+def set_geo_rules(rules):
+    st, r, _ = api("PUT", "/api/geo/rules", "alice", {"rules": rules})
+    return st, r
+
+
+def geo_event(ip, path):
+    return wait_for(lambda: find_event(lambda e: e["path"] == path, ip=ip))
+
+
+@test("I28", "Geo data: country, region and ASN on events, filters and top lists; geo/ASN rules block, challenge and fail open", "high")
+def t_geo(ctx):
+    notes = []
+    try:
+        _, g, _ = api("GET", "/api/geo", "alice")
+        loaded = g["status"]["loaded"] and len(g["status"]["databases"]) == 2
+        viewer_paths_hidden = api("GET", "/api/geo", "val")[1]["status"]["files"] is None
+
+        # Enrichment: Jakarta, AS64500.
+        as_client("203.0.113.10", "GET", "/echo/geo-enrich")
+        ev = geo_event("203.0.113.10", "/echo/geo-enrich") or {}
+        _, det, _ = api("GET", "/api/events/" + ev.get("id", "x"))
+        loc = det.get("location", {}) if isinstance(det, dict) else {}
+        enriched = (ev.get("country") == "ID" and ev.get("region") == "ID-JK" and ev.get("asn") == 64500
+                    and loc.get("country_name") == "Indonesia" and loc.get("region_name") == "Jakarta"
+                    and loc.get("as_org") == "Example Telecom ID (test)")
+        as_client("10.20.30.40", "GET", "/echo/geo-private")
+        pev = geo_event("10.20.30.40", "/echo/geo-private") or {}
+        private = pev.get("private_ip") is True and pev.get("country") is None
+        _, by_c, _ = api("GET", "/api/events?country=id&limit=50")
+        _, by_a, _ = api("GET", "/api/events?asn=AS64500&limit=50")
+        filters = (by_c["events"] and all(e["country"] == "ID" for e in by_c["events"])
+                   and by_a["events"] and all(e["asn"] == 64500 for e in by_a["events"]))
+        _, ov, _ = api("GET", "/api/overview?range=1h")
+        tops = any(c["code"] == "ID" for c in ov["top_countries"]) and any(a["asn"] == 64500 for a in ov["top_asns"])
+
+        # Impact estimate before applying.
+        as_client("198.51.100.30", "GET", "/echo/geo-cn-seen")
+        _, imp, _ = api("POST", "/api/geo/impact", "alice", {"id": "only-id", "mode": "allow_only", "action": "block", "countries": ["ID"]})
+        impact_ok = imp["impact"]["matched"] >= 1 and imp["impact"]["total"] >= imp["impact"]["matched"]
+
+        # Deny a country.
+        st1, r1 = set_geo_rules([{"id": "no-cn", "action": "block", "countries": ["CN"]}])
+        cn = as_client("198.51.100.31", "GET", "/echo/geo-cn")
+        idn = as_client("203.0.113.11", "GET", "/echo/geo-id")
+        cn_ev = geo_event("198.51.100.31", "/echo/geo-cn") or {}
+        deny_ok = (st1 == 200 and r1.get("status") == "applied" and cn.status == 403 and b"location" in cn.body
+                   and idn.status == 200 and "geo:no-cn" in cn_ev.get("rules", []))
+
+        # An IP allow wins over a geo rule.
+        api("POST", "/api/controls/ip-allow", "alice", {"value": "198.51.100.32", "reason": "e2e geo"})
+        allowed = as_client("198.51.100.32", "GET", "/echo/geo-cn-allowed").status
+        api("DELETE", "/api/controls/ip-allow/198.51.100.32", "alice")
+
+        # Allow only Indonesia: others blocked, unknown and private pass.
+        set_geo_rules([{"id": "only-id", "mode": "allow_only", "action": "block", "countries": ["ID"]}])
+        us = as_client("192.0.2.40", "GET", "/echo/geo-us").status
+        jk = as_client("203.0.113.12", "GET", "/echo/geo-jk").status
+        unknown = as_client("8.8.4.4", "GET", "/echo/geo-unknown").status
+        priv = as_client("10.20.30.41", "GET", "/echo/geo-priv2").status
+        allow_only_ok = us == 403 and jk == 200 and unknown == 200 and priv == 200
+
+        # Block one network; challenge one region.
+        set_geo_rules([{"id": "asn-64501", "action": "block", "asns": [64501]},
+                       {"id": "chal-jk", "action": "challenge", "regions": ["ID-JK"]}])
+        asn_block = as_client("203.0.113.201", "GET", "/echo/geo-asn").status
+        jk_chal = as_client("203.0.113.13", "GET", "/echo/geo-chal")
+        jk_ev = geo_event("203.0.113.13", "/echo/geo-chal") or {}
+        asn_region_ok = asn_block == 403 and jk_chal.status == 403 and jk_ev.get("action") == "challenge"
+
+        # Fail open: no database, an allow-only rule matches nothing.
+        set_geo_rules([{"id": "only-id", "mode": "allow_only", "action": "block", "countries": ["ID"]}])
+        sv, _, _ = api("PUT", "/api/settings/geo", "alice", {"city_mmdb": "/nonexistent/c.mmdb", "asn_mmdb": "/nonexistent/a.mmdb", "auto_update": False})
+        no_db = api("GET", "/api/geo", "alice")[1]["status"]["loaded"] is False
+        us_open = as_client("192.0.2.41", "GET", "/echo/geo-failopen").status
+        api("DELETE", "/api/settings/geo", "alice")
+        reloaded = api("GET", "/api/geo", "alice")[1]["status"]["loaded"] is True
+        fail_open = sv == 200 and no_db and us_open == 200 and reloaded
+
+        # Guards: roles, bad codes, audit.
+        viewer_put = api("PUT", "/api/geo/rules", "val", {"rules": []})[0]
+        bad_code = set_geo_rules([{"id": "x", "action": "block", "countries": ["IDN"]}])[0]
+        bad_action = set_geo_rules([{"id": "x", "action": "allow", "countries": ["ID"]}])[0]
+        _, aud, _ = api("GET", "/api/audit?limit=100", "alice")
+        audited = any(e.get("action") == "geo_rules" for e in aud.get("entries", []))
+        guards = viewer_put == 403 and bad_code == 400 and bad_action == 400 and audited
+
+        ok = loaded and viewer_paths_hidden and enriched and private and filters and tops and impact_ok and deny_ok \
+            and allowed == 200 and allow_only_ok and asn_region_ok and fail_open and guards
+        notes = (f"loaded={loaded} viewer_paths_hidden={viewer_paths_hidden} enriched={enriched} private={private} "
+                 f"filters={bool(filters)} tops={tops} impact={imp['impact']['matched']}/{imp['impact']['total']} "
+                 f"deny_cn={cn.status}/id={idn.status} ip_allow_wins={allowed} only_id(us={us},jk={jk},unknown={unknown},private={priv}) "
+                 f"asn_block={asn_block} region_challenge={jk_chal.status}/{jk_ev.get('action')} fail_open={fail_open} "
+                 f"viewer_put={viewer_put} bad_code={bad_code} bad_action={bad_action} audited={audited}")
+        return ok, notes
+    finally:
+        set_geo_rules([])
+        api("DELETE", "/api/settings/geo", "alice")
+
+
 @test("I21", "Failed admin logins are rate limited", "medium")
 def t_login_ratelimit(ctx):
     codes = [api("GET", "/api/me", token=f"guess-{i}")[0] for i in range(12)]
@@ -686,7 +785,7 @@ def main():
         procs.append(subprocess.Popen([str(BIN / "echo-upstream"), "127.0.0.1:13000"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
         procs.append(subprocess.Popen([str(BIN / "mock-gemini"), "127.0.0.1:13900"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
         assert wait_port(("127.0.0.1", 13000)) and wait_port(("127.0.0.1", 13900))
-        cfg = (CONFIGS / "e2e-intel.yaml").read_text().replace("__LOGDIR__", str(logdir))
+        cfg = (CONFIGS / "e2e-intel.yaml").read_text().replace("__LOGDIR__", str(logdir)).replace("__ROOT__", str(ROOT))
         (logdir / "intel.yaml").write_text(cfg)
         err = open(logdir / "proxy.stderr", "wb")
         procs.append(subprocess.Popen([str(BIN / "openshield"), "-c", str(logdir / "intel.yaml")], stdout=err, stderr=err, env=env))

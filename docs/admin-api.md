@@ -226,6 +226,19 @@ Values saved here replace the config file's values for that section until reset,
 
 Config-file users cannot be changed through these endpoints. Revoking a user also removes their passkeys and ends their passkey sessions.
 
+### Geo data and geo rules
+
+| Method | Path | Role | Notes |
+| --- | --- | --- | --- |
+| GET | `/api/geo` | any | Database status (loaded files, types, build dates, last download), the active geo rules and the policy version. File paths only for admins |
+| POST | `/api/geo/impact` | any | Body: one rule. Requests, clients and already-blocked requests it would have matched in the last 24 h, from the statistics |
+| PUT | `/api/geo/rules` | admin | `{"rules": [...]}` replaces the list as a new policy version (or a pending change with second-admin approval) |
+| PUT | `/api/settings/geo` | admin | `{"city_mmdb", "asn_mmdb", "auto_update"}`; reloads at once |
+| DELETE | `/api/settings/geo` | admin | Back to the config file |
+| POST | `/api/geo/update` | admin | `202`: downloads DB-IP Lite City and ASN into `<data dir>/geo`, checks them and switches to them. Progress and result in `GET /api/geo` |
+
+Events carry `country`, `region` (`ID-JK` or `ID:Jakarta`), `asn`, `as_org` and `private_ip`; the event detail adds `location` (country, region and city names). `GET /api/events` filters by `country`, `region` and `asn` (`13335` or `AS13335`). The overview adds `top_countries`, `top_regions` and `top_asns` with request and blocked counts.
+
 ### Passkeys
 
 | Method | Path | Auth | Notes |

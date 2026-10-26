@@ -36,6 +36,11 @@ pub struct WafConfig {
     #[serde(default)]
     pub geoip: Option<GeoIpConfig>,
 
+    /// Country, region and network (ASN) rules, evaluated before every
+    /// ruleset. See `GeoAccessConfig`.
+    #[serde(default)]
+    pub geo_access: GeoAccessConfig,
+
     #[serde(default)]
     pub scores: Vec<String>,
 
@@ -104,6 +109,186 @@ pub enum RulesetKind {
     #[default]
     Custom,
     Managed,
+}
+
+/// Rules on where a request comes from. Each compiles to a request-headers
+/// rule with id `geo:<id>` that runs before every ruleset.
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+pub struct GeoAccessConfig {
+    #[serde(default)]
+    pub rules: Vec<GeoRule>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct GeoRule {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// `deny`: act on the listed places. `allow_only`: act on everything
+    /// else (requests whose location is unknown are left alone).
+    #[serde(default)]
+    pub mode: GeoMode,
+    /// `block`, `challenge` or `log`.
+    pub action: Action,
+    /// ISO 3166-1 alpha-2 codes, e.g. `ID`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub countries: Vec<String>,
+    /// ISO 3166-2 codes, e.g. `ID-JK`, or `CC:Name` (e.g. `ID:Jakarta`)
+    /// for databases that name regions without codes (DB-IP Lite).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub regions: Vec<String>,
+    /// Autonomous system numbers, e.g. `13335`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub asns: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum GeoMode {
+    #[default]
+    Deny,
+    AllowOnly,
+}
+
+impl GeoRule {
+    /// Check codes and shape; returns a message naming the rule.
+    pub fn validate(&self) -> Result<(), String> {
+        let id_ok = !self.id.is_empty()
+            && self.id.len() <= 48
+            && self
+                .id
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-' || c == '_');
+        if !id_ok {
+            return Err(format!(
+                "geo rule id {:?}: use 1-48 lowercase letters, digits, '-' or '_'",
+                self.id
+            ));
+        }
+        if !matches!(self.action, Action::Block | Action::Challenge | Action::Log) {
+            return Err(format!(
+                "geo rule {}: action must be block, challenge or log",
+                self.id
+            ));
+        }
+        if self.countries.is_empty() && self.regions.is_empty() && self.asns.is_empty() {
+            return Err(format!(
+                "geo rule {}: list at least one country, region or ASN",
+                self.id
+            ));
+        }
+        if self.countries.len() + self.regions.len() + self.asns.len() > 500 {
+            return Err(format!("geo rule {}: at most 500 entries", self.id));
+        }
+        for c in &self.countries {
+            if !is_country_code(c) {
+                return Err(format!(
+                    "geo rule {}: {c:?} is not a two-letter country code such as ID",
+                    self.id
+                ));
+            }
+        }
+        for r in &self.regions {
+            if !is_region_code(r) {
+                return Err(format!(
+                    "geo rule {}: {r:?} is not a region such as ID-JK or ID:Jakarta",
+                    self.id
+                ));
+            }
+        }
+        if self.asns.contains(&0) {
+            return Err(format!("geo rule {}: ASN 0 is not valid", self.id));
+        }
+        Ok(())
+    }
+
+    /// Whether a request from this place would match, exactly as the
+    /// compiled expression decides (for impact estimates). `region` is the
+    /// region key as events record it: `ID-JK`, or `ID:Jakarta` when the
+    /// database has no region codes. Allowlisted addresses aside.
+    pub fn matches(&self, country: Option<&str>, region: Option<&str>, asn: Option<u32>) -> bool {
+        let listed = country.is_some_and(|c| self.countries.iter().any(|x| x == c))
+            || region.is_some_and(|r| self.regions.iter().any(|x| x == r))
+            || asn.is_some_and(|a| self.asns.contains(&a));
+        match self.mode {
+            GeoMode::Deny => listed,
+            GeoMode::AllowOnly => {
+                let by_place = !(self.countries.is_empty() && self.regions.is_empty());
+                let known = match (by_place, self.asns.is_empty()) {
+                    (true, true) => country.is_some(),
+                    (false, false) => asn.is_some(),
+                    _ => country.is_some() || asn.is_some(),
+                };
+                known && !listed
+            }
+        }
+    }
+
+    /// The rule as a filter expression over `ip.src.*` fields.
+    pub fn expression(&self) -> String {
+        let mut any = Vec::new();
+        if !self.countries.is_empty() {
+            let set: Vec<String> = self.countries.iter().map(|c| format!("\"{c}\"")).collect();
+            any.push(format!("ip.src.country in {{{}}}", set.join(" ")));
+        }
+        for r in &self.regions {
+            if let Some((cc, name)) = r.split_once(':') {
+                any.push(format!(
+                    "(ip.src.country == \"{cc}\" and ip.src.region == \"{name}\")"
+                ));
+            } else {
+                let (cc, sub) = r.split_once('-').unwrap_or((r, ""));
+                any.push(format!(
+                    "(ip.src.country == \"{cc}\" and ip.src.region_code == \"{sub}\")"
+                ));
+            }
+        }
+        if !self.asns.is_empty() {
+            let set: Vec<String> = self.asns.iter().map(u32::to_string).collect();
+            any.push(format!("ip.src.asnum in {{{}}}", set.join(" ")));
+        }
+        let listed = any.join(" or ");
+        // Allowlisted addresses (dashboard IP allows) are never geo-blocked.
+        match self.mode {
+            GeoMode::Deny => format!("not ip.src.allowlisted and ({listed})"),
+            // Only requests with a known location count as "elsewhere":
+            // private addresses and missing geo data are left alone.
+            GeoMode::AllowOnly => {
+                let known = match (self.countries.is_empty() && self.regions.is_empty(), self.asns.is_empty()) {
+                    (false, true) => "ip.src.has_country",
+                    (true, false) => "ip.src.has_asnum",
+                    _ => "(ip.src.has_country or ip.src.has_asnum)",
+                };
+                format!("not ip.src.allowlisted and {known} and not ({listed})")
+            }
+        }
+    }
+}
+
+pub fn is_country_code(c: &str) -> bool {
+    c.len() == 2 && c.bytes().all(|b| b.is_ascii_uppercase())
+}
+
+/// `ID-JK` (ISO 3166-2) or `ID:Jakarta` (country and region name).
+pub fn is_region_code(r: &str) -> bool {
+    if let Some((cc, name)) = r.split_once(':') {
+        return is_country_code(cc)
+            && !name.is_empty()
+            && name.len() <= 80
+            && name.trim() == name
+            && !name.chars().any(|c| c.is_control() || c == '"' || c == '\\' || c == ':');
+    }
+    match r.split_once('-') {
+        Some((cc, sub)) => {
+            is_country_code(cc)
+                && (1..=3).contains(&sub.len())
+                && sub.bytes().all(|b| b.is_ascii_uppercase() || b.is_ascii_digit())
+        }
+        None => false,
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -182,7 +367,7 @@ pub enum Phase {
     Logging,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum Action {
     Block,

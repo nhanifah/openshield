@@ -17,6 +17,7 @@ use openshield_core::logging::Logger;
 use openshield_core::waf::data::{RequestData, ResponseData};
 use openshield_core::{BodyVerdict, Intervention, ResponseOutcome, Verdict, Waf};
 use openshield_intel::controls::Controls;
+use openshield_intel::geo::GeoService;
 use openshield_intel::hub::{EventHub, RawEvent};
 use openshield_intel::policy::PolicyManager;
 use pingora::prelude::*;
@@ -49,6 +50,9 @@ pub struct ReverseProxyHandler {
     /// Security event pipeline, when `intel.enabled`.
     pub intel: Option<Arc<EventHub>>,
     pub controls: Option<Arc<Controls>>,
+    /// Location and ASN lookups (intelligence layer). Without it the WAF's
+    /// own `geoip` setting, if any, is used.
+    pub geo: Option<Arc<GeoService>>,
     pub logger: Arc<Logger>,
     pub upstream_tls: bool,
     pub upstream_host: String,
@@ -132,6 +136,7 @@ fn extract_request_data(session: &Session, trusted: &TrustedProxies) -> RequestD
         extension,
         headers,
         geo: None,
+        allowlisted: false,
     }
 }
 
@@ -256,8 +261,16 @@ impl ProxyHttp for ReverseProxyHandler {
             let _ = session.respond_error(431).await;
             return Ok(true);
         }
-        let req_data = extract_request_data(session, &self.trusted_proxies);
+        let mut req_data = extract_request_data(session, &self.trusted_proxies);
         let request_id = ctx.tx.id().to_string();
+        if let Some(ip) = req_data.client_ip {
+            if let Some(geo) = &self.geo {
+                req_data.geo = geo.lookup(ip);
+            }
+            if let Some(controls) = &self.controls {
+                req_data.allowlisted = controls.is_allowed(ip, now_ms());
+            }
+        }
 
         // Dynamic IP blocks (dashboard, auto-block) apply before any rule.
         if let (Some(controls), Some(ip)) = (&self.controls, req_data.client_ip)

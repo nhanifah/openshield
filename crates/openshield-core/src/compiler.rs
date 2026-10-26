@@ -21,6 +21,19 @@ pub fn compile(
 
     let mut executed = HashSet::new();
 
+    // Geo and network rules run first, in the order listed.
+    let mut geo_ids = HashSet::new();
+    for g in &config.geo_access.rules {
+        g.validate()?;
+        if !geo_ids.insert(g.id.as_str()) {
+            return Err(format!("duplicate geo rule id {:?}", g.id).into());
+        }
+        if g.enabled {
+            let rule_cfg = geo_rule_config(g);
+            rules.push(compile_rule(&rule_cfg, &rule_cfg.action, None, scheme, &mut mgr)?);
+        }
+    }
+
     for root in config
         .rulesets
         .iter()
@@ -80,6 +93,36 @@ pub fn compile(
     }
 
     Ok(Engine::new(rules, mgr, config.log_payloads))
+}
+
+/// Rule id prefix for compiled geo rules.
+pub const GEO_RULE_PREFIX: &str = "geo:";
+
+fn geo_rule_config(g: &config::GeoRule) -> config::RuleConfig {
+    let response = (g.action == config::Action::Block).then(|| config::ActionParameters {
+        response: Some(config::BlockResponse {
+            status_code: 403,
+            content_type: Some("text/plain; charset=utf-8".into()),
+            content: Some("Access from your network or location is not allowed.\n".into()),
+        }),
+        scores: Vec::new(),
+        id: None,
+        overrides: None,
+    });
+    config::RuleConfig {
+        id: format!("{GEO_RULE_PREFIX}{}", g.id),
+        description: g.description.clone(),
+        categories: vec!["geo".into()],
+        r#ref: None,
+        version: None,
+        enabled: true,
+        phase: config::Phase::RequestHeaders,
+        action: g.action.clone(),
+        expression: g.expression(),
+        action_parameters: response,
+        ratelimit: None,
+        logging: config::RuleLoggingConfig::default(),
+    }
 }
 
 /// Compile a single rule. `action` may differ from `rule_cfg.action` when an

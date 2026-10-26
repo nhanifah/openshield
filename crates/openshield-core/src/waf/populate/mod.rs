@@ -140,6 +140,7 @@ pub(crate) mod test_support {
             extension: String::new(),
             headers: Vec::new(),
             geo: None,
+            allowlisted: false,
         }
     }
 
