@@ -2296,7 +2296,7 @@
 
     function usersCard() {
       const wrap = h('div', { class: 'stack' });
-      const c = card('Users & tokens');
+      const c = card('Users & tokens', { flush: true });
       const list = h('div');
       c.body.appendChild(list);
       const name = h('input', { type: 'text', spellcheck: false, autocomplete: 'off', maxLength: 64, placeholder: 'e.g. alice' });

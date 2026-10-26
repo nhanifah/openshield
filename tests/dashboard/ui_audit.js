@@ -174,7 +174,23 @@
   // 10. Column headers cut off ("STAT…", "METH…").
   out.clippedHeaders = all.filter((el) => el.matches('th, [role=columnheader]') && el.scrollWidth > el.clientWidth + 1).slice(0, 10).map(name);
 
-  out.total = out.offscreenFocusable.length + out.clippedHeaders.length + out.strike.length + out.nestedPills.length + out.rowHeights.length + out.overflow.length + out.clippedControls.length + (out.pageScrollsSideways ? 1 : 0)
+  // 11. Every view uses the full content width: a top-level card that ends
+  // short of the view's right edge with nothing beside it was capped.
+  const view = document.getElementById('view');
+  out.narrowContainers = [];
+  if (view && vis(view)) {
+    const vr = view.getBoundingClientRect(), vcs = getComputedStyle(view);
+    const right = vr.right - parseFloat(vcs.paddingRight);
+    const tops = all.filter((el) => el.matches('.card') && view.contains(el) && !el.parentElement.closest('.card'));
+    for (const c of tops) {
+      const r = c.getBoundingClientRect();
+      const beside = tops.some((o) => o !== c && Math.abs(o.getBoundingClientRect().top - r.top) < 4 && o.getBoundingClientRect().left > r.left);
+      if (!beside && right - r.right > 8) out.narrowContainers.push(name(c) + ' ends ' + Math.round(right - r.right) + 'px short');
+    }
+    out.narrowContainers = out.narrowContainers.slice(0, 10);
+  }
+
+  out.total = out.narrowContainers.length + out.offscreenFocusable.length + out.clippedHeaders.length + out.strike.length + out.nestedPills.length + out.rowHeights.length + out.overflow.length + out.clippedControls.length + (out.pageScrollsSideways ? 1 : 0)
     + out.clippedText.length + Object.keys(out.containerStyles).length + out.uneven.length + out.lowContrastCount + out.smallTargets.length;
   return out;
 })();

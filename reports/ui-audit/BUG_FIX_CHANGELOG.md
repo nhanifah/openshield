@@ -28,6 +28,8 @@ Severity: **High** = blocks or endangers a core task for some users. **Medium** 
 | UX-18 | Low | Passkey dialog, non-passkey origin | Focus in an editable name field; Add disabled | Only the button was disabled | Field disabled too; focus on Close | DOM check on 127.0.0.1 and localhost |
 | UX-19 | Low | Sign-in field | No `aria-invalid` on error | Missing | Set on error, cleared on success | DOM check |
 | UX-20 | Low | Overview status line | "3 high alerts open" next to a nav badge of 16 | Lower severities omitted | "3 high alerts open, 12 lower" | Screenshot |
+| UX-22 | Medium | Settings, all tabs | At 1909 px every Settings card stopped at 980 px; every other view is full width | `.settings-body` had `max-width: 980px` | Cap removed | Every view's top-level cards span the content width (1669 px at 1909); audit 0 at 1600/1282/1024/375 |
+| UX-23 | Low | Settings, Users & tokens | Users table indented inside its card; other tables run edge to edge | Card built without `flush` | `card('Users & tokens', { flush: true })` | Screenshot at 1600 |
 | UX-21 | Low | Tables for viewers | "—" in the empty action column | `tableRow` filled empty cells with "—" | Empty action cells stay empty | DOM check |
 
 ## Tooling
@@ -37,6 +39,7 @@ Severity: **High** = blocks or endangers a core task for some users. **Medium** 
 | T-01 | `ui_audit.js` contrast | Mid-animation colours reported as `oklab(...)` were misread (minus signs dropped): false 2.5:1 failures on Live | Colours resolved by painting on a canvas | False positive gone; real contrast unchanged |
 | T-02 | `ui_audit.js` | Could not see hidden focusable controls or cut-off column headers | New checks `offscreenFocusable` and `clippedHeaders` | Re-creating UX-01 in the page gives 10 hits; the fix gives 0 |
 | T-03 | `live_stack.py` | Could not run beside an existing stack; SIGTERM left the proxy holding ports | `--port-offset N`; shutdown waits 5 s, then kills | Several restarts on port 19290, ports freed within seconds |
+| T-05 | `ui_audit.js` | Could not see a view whose cards are capped narrower than the others (UX-22) | New check `narrowContainers` | Re-adding the 980 px cap at 1600 px gives 1 hit (380 px short); fixed build: 0 |
 | T-04 | New `ui_sweep.js`, `inject_audit.py` | Running the audit on 14 routes × 2 themes by hand per width | One script per width returns all failures | Used for all sweeps |
 
 ## Files changed

@@ -438,7 +438,7 @@ body.drawer-open .toasts { right: calc(min(720px, 100vw) + 16px); }
 }
 
 /* ---- settings */
-.settings-body { display: flex; flex-direction: column; gap: var(--gap); max-width: 980px; }
+.settings-body { display: flex; flex-direction: column; gap: var(--gap); }
 .settings-form { display: flex; flex-direction: column; gap: 14px; }
 .settings-form .grid { gap: 12px 16px; }
 .settings-form input[type="text"], .settings-form input[type="url"], .settings-form input[type="password"],
