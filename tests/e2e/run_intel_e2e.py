@@ -302,16 +302,53 @@ def t_ai_slow_garbage(ctx):
     return ok, f"invalid_outputs={st1['invalid_outputs']} slow_mode_request={s} in {req_time:.2f}s last_error={st2.get('last_error')}"
 
 
-@test("I15", "Labels: four-eyes review, then dataset export without raw IPs", "high")
+@test("I15", "Labels: a person's label applies at once and can be changed, removed or bulk-set; AI suggestions are accepted or dismissed; export has no raw IPs", "high")
 def t_labels_dataset(ctx):
     ip = "203.0.113.100"
     as_client(ip, "GET", "/admin?label=1")
+    # Different requests for the bulk step: the same request shape labeled two
+    # ways would be dropped from the dataset as ambiguous.
+    as_client("203.0.113.101", "GET", "/echo/bulk-label-a")
+    as_client("203.0.113.102", "GET", "/echo/bulk-label-b")
     e = wait_for(lambda: find_event(lambda e: e["path"] == "/admin", ip=ip))
-    st1, lab, _ = api("POST", f"/api/events/{e['id']}/label", "ana", {"label": "MALICIOUS_CONFIRMED", "note": "e2e"})
-    self_ok, _, _ = api("POST", f"/api/labels/{lab['id']}/approve", "ana")
-    other_ok, _, _ = api("POST", f"/api/labels/{lab['id']}/approve", "alice")
-    bad_label, _, _ = api("POST", f"/api/events/{e['id']}/label", "ana", {"label": "TOTALLY_FINE"})
-    st2, ds, _ = api("POST", "/api/datasets/export", "alice", {"split": "temporal"})
+    e2 = wait_for(lambda: find_event(lambda e: e["path"] == "/echo/bulk-label-a", ip="203.0.113.101"))
+    e3 = wait_for(lambda: find_event(lambda e: e["path"] == "/echo/bulk-label-b", ip="203.0.113.102"))
+    path = f"/api/events/{e['id']}/label"
+    detail = lambda: api("GET", f"/api/events/{e['id']}")[1]  # noqa: E731
+
+    st1, _, _ = api("PUT", path, "ana", {"label": "SUSPICIOUS", "note": "e2e"})
+    immediate = detail().get("label") == "SUSPICIOUS"
+    st2, _, _ = api("PUT", path, "ana", {"label": "MALICIOUS_CONFIRMED"})
+    d = detail()
+    changed = d.get("label") == "MALICIOUS_CONFIRMED" and [l["status"] for l in d.get("labels", [])][:2] == ["confirmed", "superseded"]
+    st3, _, _ = api("PUT", path, "ana", {"label": None})
+    cleared = detail().get("label") is None
+    api("PUT", path, "ana", {"label": "MALICIOUS_CONFIRMED"})
+    viewer, _, _ = api("PUT", path, "val", {"label": "SUSPICIOUS"})
+    bad_label, _, _ = api("PUT", path, "ana", {"label": "TOTALLY_FINE"})
+    bst, bulk, _ = api("POST", "/api/labels/bulk", "ana", {"event_ids": [e2["id"], e3["id"]], "label": "FALSE_POSITIVE"})
+    bulk_ok = bst == 200 and bulk.get("labeled") == 2 and api("GET", f"/api/events/{e3['id']}")[1].get("label") == "FALSE_POSITIVE"
+    _, lab, _ = api("GET", "/api/labels?view=confirmed&limit=500", "ana")
+    current = {l["event_id"]: l["label"] for l in lab.get("labels", [])}
+    listed = current.get(e["id"]) == "MALICIOUS_CONFIRMED" and current.get(e2["id"]) == "FALSE_POSITIVE"
+
+    # AI suggestions (from verdicts that disagreed with the firewall earlier in the run).
+    _, sug, _ = api("GET", "/api/labels?view=suggested&limit=50", "ana")
+    pending = sug.get("labels", [])
+    suggestions = "none pending"
+    if pending:
+        a, _, _ = api("POST", f"/api/labels/{pending[0]['id']}/accept", "ana")
+        again, _, _ = api("POST", f"/api/labels/{pending[0]['id']}/accept", "ana")
+        took = api("GET", f"/api/events/{pending[0]['event_id']}")[1].get("label") == pending[0]["label"]
+        suggestions = f"accept={a} again={again} labeled={took}"
+        if len(pending) > 1:
+            dz, _, _ = api("POST", f"/api/labels/{pending[1]['id']}/dismiss", "ana")
+            suggestions += f" dismiss={dz}"
+        sug_ok = a == 200 and again == 409 and took
+    else:
+        sug_ok = True
+
+    st4, ds, _ = api("POST", "/api/datasets/export", "alice", {"split": "temporal"})
     files = {}
     for split in ("train", "validation", "test", "manifest"):
         s, body, _ = api("GET", f"/api/datasets/{ds['version']}/{split}", "alice", raw=True)
@@ -319,9 +356,11 @@ def t_labels_dataset(ctx):
     trav, _, _ = api("GET", f"/api/datasets/{ds['version']}/..%2F..%2Fintel.db", "alice", raw=True)
     alltext = b"".join(files.values()).decode()
     has_event = e["id"] in alltext
-    ok = (st1 == 200 and self_ok == 403 and other_ok == 200 and bad_label == 400 and st2 == 200
-          and has_event and ip not in alltext and trav in (400, 404))
-    return ok, f"label={st1} self_approve={self_ok} other_approve={other_ok} bad_label={bad_label} export={st2} contains_event={has_event} raw_ip_exported={ip in alltext} traversal={trav}"
+    ok = (st1 == 200 and immediate and st2 == 200 and changed and st3 == 200 and cleared and viewer == 403 and bad_label == 400
+          and bulk_ok and listed and sug_ok and st4 == 200 and has_event and ip not in alltext and trav in (400, 404))
+    return ok, (f"set={st1} applies_at_once={immediate} change={st2}/{changed} clear={st3}/{cleared} viewer={viewer} bad_label={bad_label} "
+                f"bulk={bst}/{bulk_ok} listed={listed} suggestions[{suggestions}] export={st4} contains_event={has_event} "
+                f"raw_ip_exported={ip in alltext} traversal={trav}")
 
 
 @test("I16", "Live stream delivers event and stats messages", "medium")

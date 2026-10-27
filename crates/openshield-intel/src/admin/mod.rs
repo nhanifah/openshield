@@ -172,7 +172,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/overview", get(overview))
         .route("/api/events", get(events))
         .route("/api/events/{id}", get(event_detail))
-        .route("/api/events/{id}/label", post(label_event))
+        .route("/api/events/{id}/label", post(label_event).put(label_event))
         .route("/api/stream", get(stream))
         .route("/api/alerts", get(alerts))
         .route("/api/alerts/{id}/ack", post(alert_ack))
@@ -195,8 +195,9 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/changes/{id}/approve", post(change_approve))
         .route("/api/changes/{id}/reject", post(change_reject))
         .route("/api/labels", get(labels))
-        .route("/api/labels/{id}/approve", post(label_approve))
-        .route("/api/labels/{id}/reject", post(label_reject))
+        .route("/api/labels/bulk", post(label_bulk))
+        .route("/api/labels/{id}/accept", post(label_accept))
+        .route("/api/labels/{id}/dismiss", post(label_dismiss))
         .route("/api/datasets", get(datasets))
         .route("/api/datasets/export", post(dataset_export))
         .route("/api/datasets/{version}/{split}", get(dataset_download))
@@ -462,31 +463,87 @@ async fn stream(State(app): S, _c: Caller) -> Sse<impl Stream<Item = Result<SseE
 // ---- labels ------------------------------------------------------------------
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct LabelBody {
-    label: String,
+    /// `null` clears the label.
+    label: Option<String>,
     #[serde(default)]
     note: String,
 }
 
-async fn label_event(State(app): S, c: Caller, Path(id): Path<String>, Json(b): Json<LabelBody>) -> ApiResult {
-    c.require(Role::Analyst)?;
-    if !LABELS.contains(&b.label.as_str()) {
+fn check_label(label: &Option<String>, note: &str) -> Result<(), ApiError> {
+    if let Some(l) = label
+        && !LABELS.contains(&l.as_str())
+    {
         return Err(ApiError::bad(format!("label must be one of {}", LABELS.join(", "))));
     }
-    if b.note.len() > 2000 {
+    if note.len() > 2000 {
         return Err(ApiError::bad("note is too long (max 2000)"));
     }
-    let ev = app.hub.event(&id).map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
-    // Make sure the event is persisted before labeling it.
-    app.hub.store.insert_events(std::slice::from_ref(&ev)).map_err(ApiError::internal)?;
-    let model_version = ev.ai.as_ref().map(|v| format!("{}:{}", v.model, v.model_version));
+    Ok(())
+}
+
+/// Set one event's label. Persists the event first if it is only in memory.
+fn set_one(app: &App, c: &Caller, id: &str, label: Option<&str>, note: &str) -> Result<Option<i64>, ApiError> {
+    if app.hub.store.get_event(id).map_err(ApiError::internal)?.is_none() {
+        let ev = app.hub.event(id).map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
+        app.hub.store.insert_events(std::slice::from_ref(&ev)).map_err(ApiError::internal)?;
+    }
     let lid = app
         .hub
         .store
-        .add_label(&id, &b.label, "operator", "candidate", &b.note, &c.user.name, Some(app.policy.version()), model_version.as_deref())
+        .set_label(id, label, note, &c.user.name, Some(app.policy.version()))
         .map_err(ApiError::internal)?;
-    audit(&app, &c, "label_create", &id, json!({"label": b.label, "label_id": lid}), "ok");
-    ok(json!({"id": lid, "status": "candidate"}))
+    app.hub.relabel_recent(id, label);
+    Ok(lid)
+}
+
+/// A person's label applies at once and can be changed any time.
+async fn label_event(State(app): S, c: Caller, Path(id): Path<String>, Json(b): Json<LabelBody>) -> ApiResult {
+    c.require(Role::Analyst)?;
+    check_label(&b.label, &b.note)?;
+    let lid = set_one(&app, &c, &id, b.label.as_deref(), &b.note)?;
+    let action = if b.label.is_some() { "label_set" } else { "label_clear" };
+    audit(&app, &c, action, &id, json!({"label": b.label, "label_id": lid}), "ok");
+    ok(json!({"event_id": id, "label": b.label, "label_id": lid}))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BulkLabelBody {
+    event_ids: Vec<String>,
+    label: Option<String>,
+    #[serde(default)]
+    note: String,
+}
+
+async fn label_bulk(State(app): S, c: Caller, Json(b): Json<BulkLabelBody>) -> ApiResult {
+    c.require(Role::Analyst)?;
+    check_label(&b.label, &b.note)?;
+    if b.event_ids.is_empty() || b.event_ids.len() > 500 {
+        return Err(ApiError::bad("send between 1 and 500 event ids"));
+    }
+    let app2 = Arc::clone(&app);
+    let who = c.user.name.clone();
+    let caller_ip = c.ip;
+    let label = b.label.clone();
+    let ids = b.event_ids.clone();
+    let note = b.note.clone();
+    let (done, missing) = blocking(move || {
+        let c2 = Caller { user: auth::User { name: who, role: Role::Analyst, source: auth::UserSource::Dashboard }, ip: caller_ip };
+        let (mut done, mut missing) = (0usize, Vec::new());
+        for id in &ids {
+            match set_one(&app2, &c2, id, label.as_deref(), &note) {
+                Ok(_) => done += 1,
+                Err(_) => missing.push(id.clone()),
+            }
+        }
+        Ok((done, missing))
+    })
+    .await?;
+    audit(&app, &c, if b.label.is_some() { "label_set" } else { "label_clear" }, &format!("{} events", done),
+          json!({"label": b.label, "events": done, "not_found": missing.len()}), "ok");
+    ok(json!({"labeled": done, "not_found": missing}))
 }
 
 #[derive(Deserialize)]
@@ -495,47 +552,64 @@ struct StatusQ {
     limit: Option<usize>,
 }
 
-async fn labels(State(app): S, c: Caller, Query(q): Query<StatusQ>) -> ApiResult {
+#[derive(Deserialize)]
+struct LabelsQ {
+    /// `suggested` (AI, waiting), `confirmed` (current labels) or `history`.
+    view: Option<String>,
+    label: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn labels(State(app): S, c: Caller, Query(q): Query<LabelsQ>) -> ApiResult {
     c.require(Role::Analyst)?;
     let hub = Arc::clone(&app.hub);
-    let status = nonempty(q.status);
+    let status = match q.view.as_deref().unwrap_or("confirmed") {
+        "suggested" => Some("suggested"),
+        "confirmed" => Some("confirmed"),
+        "history" => None,
+        v => return Err(ApiError::bad(format!("unknown view {v:?}"))),
+    };
+    let label = nonempty(q.label);
     let limit = q.limit.unwrap_or(200).min(1000);
-    let rows = blocking(move || {
-        let ls = hub.store.labels(status.as_deref(), limit)?;
+    let (rows, counts) = blocking(move || {
+        let ls = hub.store.labels(status, label.as_deref(), limit)?;
         let mut out = Vec::new();
         for l in ls {
-            let ev = hub.store.get_event(&l.event_id)?.map(|e| e.summary());
+            let ev = hub.store.get_event(&l.event_id)?;
             let mut v = serde_json::to_value(&l).map_err(|e| e.to_string())?;
-            v["event"] = json!(ev);
+            v["event"] = json!(ev.as_ref().map(|e| e.summary()));
+            if let Some(ai) = ev.as_ref().and_then(|e| e.ai.as_ref()) {
+                v["ai"] = json!({"category": ai.category.as_str(), "confidence": ai.confidence, "risk": ai.risk, "explanation": ai.explanation});
+            }
             out.push(v);
         }
-        Ok(out)
+        Ok((out, hub.store.label_counts()?))
     })
     .await?;
-    ok(json!({"labels": rows}))
+    ok(json!({"labels": rows, "counts": counts}))
 }
 
-async fn decide_label(app: &App, c: &Caller, id: i64, status: &str) -> ApiResult {
+/// Accept an AI suggestion: label the event with it.
+async fn label_accept(State(app): S, c: Caller, Path(id): Path<i64>) -> ApiResult {
     c.require(Role::Analyst)?;
     let l = app.hub.store.get_label(id).map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
-    if l.status != "candidate" {
-        return Err(ApiError::bad(format!("label is already {}", l.status)));
+    if l.status != "suggested" {
+        return Err(ApiError(StatusCode::CONFLICT, format!("this suggestion was already {}", l.status)));
     }
-    if l.created_by == c.user.name {
-        audit(app, c, &format!("label_{status}"), &id.to_string(), json!({}), "denied: own label");
-        return Err(ApiError::forbidden("a reviewer cannot decide on their own label"));
-    }
-    app.hub.store.decide_label(id, status, &c.user.name).map_err(ApiError::internal)?;
-    audit(app, c, &format!("label_{status}"), &id.to_string(), json!({"event_id": l.event_id, "label": l.label}), "ok");
-    ok(json!({"id": id, "status": status}))
+    let lid = set_one(&app, &c, &l.event_id, Some(&l.label), "")?;
+    audit(&app, &c, "label_set", &l.event_id, json!({"label": l.label, "label_id": lid, "accepted_suggestion": id}), "ok");
+    ok(json!({"event_id": l.event_id, "label": l.label, "label_id": lid}))
 }
 
-async fn label_approve(State(app): S, c: Caller, Path(id): Path<i64>) -> ApiResult {
-    decide_label(&app, &c, id, "approved").await
-}
-
-async fn label_reject(State(app): S, c: Caller, Path(id): Path<i64>) -> ApiResult {
-    decide_label(&app, &c, id, "rejected").await
+/// Dismiss an AI suggestion: the event stays unlabeled.
+async fn label_dismiss(State(app): S, c: Caller, Path(id): Path<i64>) -> ApiResult {
+    c.require(Role::Analyst)?;
+    let l = app.hub.store.get_label(id).map_err(ApiError::internal)?.ok_or_else(ApiError::not_found)?;
+    if !app.hub.store.dismiss_suggestion(id, &c.user.name).map_err(ApiError::internal)? {
+        return Err(ApiError(StatusCode::CONFLICT, format!("this suggestion was already {}", l.status)));
+    }
+    audit(&app, &c, "label_dismiss", &l.event_id, json!({"suggestion": id, "label": l.label}), "ok");
+    ok(json!({"status": "dismissed"}))
 }
 
 // ---- alerts --------------------------------------------------------------------

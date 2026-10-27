@@ -1,11 +1,11 @@
 //! Layer 4: reviewed datasets from labeled security events.
 //!
-//! Ground truth is only what a person approved. AI suggestions are labels
-//! with `source = ai_candidate` and stay candidates until a reviewer other
-//! than their creator approves them; an export can include pending
-//! candidates only in a separate `candidates.jsonl`, never in the splits.
+//! Ground truth is the current label a person set on each event (status
+//! `confirmed`). AI suggestions stay `suggested` until a person accepts,
+//! overrides or dismisses them; an export can include pending suggestions
+//! only in a separate `candidates.jsonl`, never in the splits.
 //!
-//! Export pipeline: approved labels → join events → drop conflicting
+//! Export pipeline: current labels → join events → drop conflicting
 //! fingerprints → deduplicate by (fingerprint, label) → cap any single
 //! client's share (poisoning resistance) → split (temporal or by client) →
 //! check that no fingerprint crosses splits → write JSONL plus a manifest
@@ -149,8 +149,8 @@ pub fn export(
     );
     let mut stats = ExportStats::default();
 
-    // 1. approved labels, newest decision per event wins
-    let labels = store.approved_labels()?;
+    // 1. the current label of each event (set by a person)
+    let labels = store.confirmed_labels()?;
     stats.approved_labels = labels.len();
     let mut per_event: HashMap<String, Label> = HashMap::new();
     for l in labels {
@@ -291,13 +291,13 @@ pub fn export(
 
     if params.include_candidates {
         let cands: Vec<Value> = store
-            .labels(Some("candidate"), 1_000_000)?
+            .labels(Some("suggested"), None, 1_000_000)?
             .into_iter()
             .filter_map(|l| {
                 let ev = store.get_event(&l.event_id).ok().flatten()?;
                 Some(json!({
                     "event_id": ev.id, "features": features(&ev, sanitizer),
-                    "candidate_label": l.label, "label_source": l.source, "status": "candidate",
+                    "candidate_label": l.label, "label_source": l.source, "status": "suggested",
                     "model_version": l.model_version, "collected_ts": ev.ts,
                     "dataset_version": version, "not_ground_truth": true,
                 }))
@@ -317,7 +317,7 @@ pub fn export(
         "labels": LABELS,
         "stats": stats,
         "notes": [
-            "Splits contain only labels approved by a person.",
+            "Splits contain only labels set by a person.",
             "candidates.jsonl (if present) holds unreviewed suggestions and is not ground truth.",
             "Client identifiers are keyed hashes; raw IPs are not exported.",
             "Values were redacted at capture time and again at export."
@@ -363,10 +363,7 @@ mod tests {
     }
 
     fn approve(store: &Store, event: &str, label: &str) {
-        let id = store
-            .add_label(event, label, "operator", "candidate", "", "alice", None, None)
-            .unwrap();
-        store.decide_label(id, "approved", "bob").unwrap();
+        store.set_label(event, Some(label), "", "alice", None).unwrap();
     }
 
     fn read(dir: &Path, version: &str, split: &str) -> Vec<Value> {
@@ -394,9 +391,7 @@ mod tests {
             approve(&store, &format!("e{i}"), if i % 2 == 0 { "ALLOWED_NORMAL" } else { "MALICIOUS_CONFIRMED" });
         }
         approve(&store, "dup", "ALLOWED_NORMAL");
-        store
-            .add_label("cand", "MALICIOUS_CONFIRMED", "ai_candidate", "candidate", "", "ai", None, Some("m"))
-            .unwrap();
+        store.add_suggestion("cand", "MALICIOUS_CONFIRMED", "m").unwrap();
         let s = Sanitizer::new(Some(b"k".to_vec()), false);
         let (v, stats) = export(&store, tmp.path(), "admin", &ExportParams { include_candidates: true, ..Default::default() }, &s).unwrap();
         assert_eq!(stats.duplicates_removed, 1);
@@ -404,7 +399,7 @@ mod tests {
         assert_eq!(total, 20);
         let train = read(tmp.path(), &v, "train");
         assert_eq!(train.len(), 14);
-        assert!(train.iter().all(|r| r["review_status"] == "approved"));
+        assert!(train.iter().all(|r| r["review_status"] == "confirmed"));
         let all: Vec<Value> = ["train", "validation", "test"].iter().flat_map(|s| read(tmp.path(), &v, s)).collect();
         assert!(all.iter().all(|r| r["event_id"] != "cand"), "candidate leaked into splits");
         assert!(all.iter().all(|r| !r.to_string().contains("10.0.0.")), "raw IP exported");

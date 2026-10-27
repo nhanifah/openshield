@@ -157,11 +157,60 @@
   function labelBadge(l) {
     if (!l) return h('span', { class: 'faint', text: '—' });
     const c = /MALICIOUS|VIOLATION/.test(l) ? '--c-block' : l === 'SUSPICIOUS' ? '--c-suspicious' : /FALSE_/.test(l) ? '--c-challenge' : /^ALLOWED/.test(l) ? '--c-pass' : '--c-neutral';
-    return cvar(h('span', { class: 'badge plain mono', text: String(l) }), 'var(' + c + ')');
+    return cvar(h('span', { class: 'badge plain', text: labelName(l), title: String(l) }), 'var(' + c + ')');
   }
+  // Readable names; the codes stay the same in the data and datasets.
+  const LABEL_NAMES = { ALLOWED_NORMAL: 'Normal', ALLOWED_UNUSUAL: 'Unusual but fine', SUSPICIOUS: 'Suspicious', MALICIOUS_CONFIRMED: 'Malicious',
+    POLICY_VIOLATION: 'Policy violation', FALSE_POSITIVE: 'False positive', FALSE_NEGATIVE: 'False negative', UNKNOWN: 'Unknown', NEEDS_REVIEW: 'Needs review' };
+  const labelName = (l) => LABEL_NAMES[l] || str(l);
+  const LABEL_STATUS = { confirmed: 'Current', superseded: 'Replaced', cleared: 'Removed', suggested: 'Waiting', accepted: 'Accepted',
+    overridden: 'Overridden', dismissed: 'Dismissed' };
+  const labelKind = (l) => /MALICIOUS|VIOLATION/.test(l) ? 'bad' : l === 'SUSPICIOUS' ? 'susp' : /FALSE_/.test(l) ? 'warn' : /^ALLOWED/.test(l) ? 'ok' : 'none';
+
+  // The label of one event as a dropdown that saves on change. A person's
+  // label applies at once; "Not labeled" removes it. Undo in the toast.
+  function labelPicker(ev, onChange, opts) {
+    opts = opts || {};
+    if (!can('analyst')) return labelBadge(ev.label);
+    const sel = h('select', { class: 'label-select', 'aria-label': 'Label for event ' + shortId(ev.id), title: 'Label (saved as soon as you choose)' },
+      h('option', { value: '', text: opts.placeholder || 'Not labeled' }), LABELS.map((l) => h('option', { value: l, text: labelName(l) })));
+    sel.value = ev.label || '';
+    sel.dataset.k = labelKind(sel.value);
+    const stop = (e) => e.stopPropagation();
+    sel.addEventListener('click', stop);
+    sel.addEventListener('keydown', stop);
+    sel.addEventListener('change', async () => {
+      const prev = ev.label || '';
+      const next = sel.value;
+      sel.disabled = true;
+      try {
+        await setLabel(ev.id, next || null, opts.note ? opts.note() : '');
+        ev.label = next || null;
+        sel.dataset.k = labelKind(next);
+        const undo = h('button', { type: 'button', class: 'btn-link', text: 'Undo' });
+        undo.addEventListener('click', async () => {
+          await setLabel(ev.id, prev || null, '');
+          ev.label = prev || null;
+          sel.value = prev; sel.dataset.k = labelKind(prev);
+          if (onChange) onChange(ev);
+          toast('Label restored.', 'ok');
+        });
+        toast(h('span', null, next ? 'Labeled ' + labelName(next) + '. ' : 'Label removed. ', undo), 'ok', 6000);
+        if (onChange) onChange(ev);
+      } catch (e) {
+        sel.value = prev;
+        if (e.status !== 401) toast(e.message, 'error');
+      } finally { sel.disabled = false; }
+    });
+    return sel;
+  }
+  function setLabel(id, label, note) {
+    return api('/api/events/' + enc(id) + '/label', { method: 'PUT', body: { label, note: note || '' } });
+  }
+
   function sourceBadge(src) {
-    if (src === 'ai_candidate') return h('span', { class: 'badge ai-src', title: 'A model suggestion. Not ground truth until a person approves it.' }, icon('bot'), 'AI candidate');
-    if (src === 'operator') return h('span', { class: 'badge op-src', title: 'Labelled by a person' }, icon('user'), 'Operator');
+    if (src === 'ai' || src === 'ai_candidate') return h('span', { class: 'badge ai-src', title: 'Suggested by AI analysis' }, icon('bot'), 'AI');
+    if (src === 'operator') return h('span', { class: 'badge op-src', title: 'Set by a person' }, icon('user'), 'Person');
     if (src === 'rule') return h('span', { class: 'badge rule-src', title: 'Derived from a rule match' }, icon('policy'), 'Rule');
     return h('span', { class: 'badge rule-src', text: str(src) || 'unknown' });
   }
@@ -232,7 +281,7 @@
   }
   function toast(msg, kind, ms) {
     const box = $('toasts');
-    const t = h('div', { class: 'toast toast-' + (kind || 'info'), role: kind === 'error' ? 'alert' : 'status', text: msg });
+    const t = h('div', { class: 'toast toast-' + (kind || 'info'), role: kind === 'error' ? 'alert' : 'status' }, msg instanceof Node ? msg : String(msg));
     box.appendChild(t);
     while (box.children.length > 5) box.firstChild.remove();
     setTimeout(() => t.remove(), ms || (kind === 'error' ? 7000 : 4500));
@@ -298,7 +347,7 @@
   }
   function table(cols, rows, opts) {
     opts = opts || {};
-    const thead = h('thead', null, h('tr', null, cols.map((c) => h('th', { class: c.num ? 'right' : '', scope: 'col', text: c.label }))));
+    const thead = h('thead', null, h('tr', null, cols.map((c) => h('th', { class: (c.num ? 'right' : '') + (c.cls === 'pick' ? ' pick' : ''), scope: 'col' }, c.label instanceof Node ? c.label : str(c.label)))));
     const tbody = h('tbody');
     for (const r of rows) tbody.appendChild(tableRow(cols, r, opts));
     const t = h('table', { class: 'tbl ' + (opts.class || '') }, opts.caption ? h('caption', { class: 'sr-only', text: opts.caption }) : null, thead, tbody);
@@ -1332,11 +1381,39 @@
     const ROW = 36, OVER = 8;
     const COLS = ['Time', 'Action', 'Status', 'Request', 'Client', 'Origin', 'Rules', 'Anomaly', 'AI (risk)', 'Label'];
     const vbody = h('div', { class: 'vbody', role: 'rowgroup' });
-    const vhead = h('div', { class: 'vhead', role: 'row' }, COLS.map((t) => h('div', { role: 'columnheader', text: t })));
+    // Bulk labeling: tick rows, pick a label, apply.
+    const picked = new Set();
+    const allBox = h('input', { type: 'checkbox', 'aria-label': 'Select all loaded events' });
+    const vhead = h('div', { class: 'vhead', role: 'row' }, h('div', { role: 'columnheader', class: 'pick' }, can('analyst') ? allBox : null), COLS.map((t) => h('div', { role: 'columnheader', text: t })));
+    const bulkCount = h('strong');
+    const bulkSel = select([['', 'Choose a label…']].concat(LABELS.map((l) => [l, labelName(l)])).concat([['__clear', 'Remove label']]), '', { 'aria-label': 'Label for the selected events' });
+    const bulkApply = h('button', { type: 'button', class: 'btn btn-sm btn-primary', text: 'Apply' });
+    const bulkClear = h('button', { type: 'button', class: 'btn btn-sm', text: 'Clear selection' });
+    const bulkBar = h('div', { class: 'bulk-bar', hidden: true, role: 'region', 'aria-label': 'Label selected events' }, bulkCount, bulkSel, bulkApply, bulkClear);
+    function syncBulk() {
+      bulkBar.hidden = picked.size === 0;
+      bulkCount.textContent = picked.size + ' selected';
+      allBox.checked = rows.length > 0 && picked.size === rows.length;
+      allBox.indeterminate = picked.size > 0 && picked.size < rows.length;
+    }
+    allBox.addEventListener('change', () => { picked.clear(); if (allBox.checked) for (const r of rows) picked.add(r.id); syncBulk(); schedule(); });
+    bulkClear.addEventListener('click', () => { picked.clear(); syncBulk(); schedule(); });
+    bulkApply.addEventListener('click', () => {
+      if (!bulkSel.value) { toast('Choose a label first.', 'warn'); bulkSel.focus(); return; }
+      const label = bulkSel.value === '__clear' ? null : bulkSel.value;
+      const ids = [...picked];
+      act(bulkApply, async () => {
+        const r = await api('/api/labels/bulk', { method: 'POST', body: { event_ids: ids, label } });
+        for (const ev of rows) if (picked.has(ev.id)) ev.label = label;
+        toast((label ? 'Labeled ' + labelName(label) + ': ' : 'Label removed: ') + full(r.labeled) + ' event' + (r.labeled === 1 ? '' : 's') + '.', 'ok');
+        picked.clear(); bulkSel.value = ''; syncBulk(); schedule();
+      });
+    });
     const inner = h('div', { class: 'vlist-inner', role: 'table', 'aria-label': 'Events', 'aria-rowcount': '-1' }, vhead, vbody);
     const vlist = h('div', { class: 'vlist' }, inner);
     const foot = h('div', { class: 'list-foot', role: 'status' });
     const lc = card('Results', { flush: true });
+    if (can('analyst')) lc.head.appendChild(bulkBar);
     lc.body.append(vlist, foot);
     lc.el.style.marginTop = 'var(--gap)';
     root.append(lc.el);
@@ -1344,7 +1421,12 @@
     let rows = [], next = null, loading = false, done = false, err = null, selected = null, rafId = 0;
     function cellsFor(ev) {
       const req = h('div', { class: 'mono', role: 'cell', title: str(ev.method) + ' ' + str(ev.host) + str(ev.path) + (ev.query ? '?' + ev.query : '') }, h('span', { class: 'faint', text: str(ev.method) + ' ' }), str(ev.path), ev.query ? h('span', { class: 'faint', text: '?' + ev.query }) : null);
+      const box = h('input', { type: 'checkbox', checked: picked.has(ev.id), 'aria-label': 'Select event ' + shortId(ev.id) });
+      box.addEventListener('click', (e) => e.stopPropagation());
+      box.addEventListener('keydown', (e) => e.stopPropagation());
+      box.addEventListener('change', () => { if (box.checked) picked.add(ev.id); else picked.delete(ev.id); syncBulk(); });
       return [
+        h('div', { role: 'cell', class: 'pick' }, can('analyst') ? box : null),
         h('div', { role: 'cell' }, timeEl(ev.ts, 'clock')),
         h('div', { role: 'cell' }, actionBadge(ev.action)),
         h('div', { role: 'cell', class: 'num', text: str(ev.status) || '—' }),
@@ -1354,7 +1436,7 @@
         h('div', { role: 'cell', class: 'mono', text: Array.isArray(ev.rules) && ev.rules.length ? ev.rules.join(', ') : '—' }),
         h('div', { role: 'cell' }, anomalyText(ev.anomaly_score)),
         h('div', { role: 'cell' }, aiBadge(ev.ai, true)),
-        h('div', { role: 'cell' }, labelBadge(ev.label)),
+        h('div', { role: 'cell' }, labelPicker(ev)),
       ];
     }
     function render() {
@@ -1551,16 +1633,29 @@
     out.push(ai);
 
     // labels
-    const lb = section('Labels');
+    const lb = section('Label');
     const labels = Array.isArray(ev.labels) ? ev.labels : [];
-    lb.appendChild(labels.length ? table([
-      { label: 'Label', render: (r) => labelBadge(r.label) },
-      { label: 'Source', render: (r) => sourceBadge(r.source) },
-      { label: 'Status', render: (r) => stBadge(r.status) },
-      { label: 'Reviewer', render: (r) => str(r.reviewer) || '—' },
-      { label: 'Note', cls: 'wrap', render: (r) => str(r.note) || '—' },
-      { label: 'When', render: (r) => timeEl(r.ts) },
-    ], labels, { class: 'compact' }) : h('p', { class: 'muted', text: 'Not labelled yet.' }));
+    const note = h('input', { type: 'text', maxLength: 500, placeholder: 'Note, saved with the next change (optional)', 'aria-label': 'Label note' });
+    lb.appendChild(h('div', { class: 'label-row' }, labelPicker(ev, () => loadDrawer(), { note: () => note.value.trim() }), can('analyst') ? note : null));
+    const pending = labels.find((l) => l.status === 'suggested');
+    if (pending && can('analyst')) {
+      const acc = h('button', { type: 'button', class: 'btn btn-sm btn-primary', text: 'Accept' });
+      const dis = h('button', { type: 'button', class: 'btn btn-sm', text: 'Dismiss' });
+      acc.addEventListener('click', () => act(acc, async () => { await api('/api/labels/' + enc(pending.id) + '/accept', { method: 'POST' }); toast('Labeled ' + labelName(pending.label) + '.', 'ok'); loadDrawer(); }));
+      dis.addEventListener('click', () => act(dis, async () => { await api('/api/labels/' + enc(pending.id) + '/dismiss', { method: 'POST' }); toast('Suggestion dismissed.', 'ok'); loadDrawer(); }));
+      lb.appendChild(h('div', { class: 'callout callout-ai suggestion' }, icon('bot'),
+        h('span', null, 'AI suggests ', h('strong', { text: labelName(pending.label) }), '. Accept it, dismiss it, or pick a label above.'), h('span', { class: 'row' }, acc, dis)));
+    }
+    if (labels.length) {
+      lb.appendChild(h('h4', { class: 'sub-head', text: 'History' }));
+      lb.appendChild(table([
+        { label: 'Label', render: (r) => r.label ? labelBadge(r.label) : h('span', { class: 'faint', text: 'none' }) },
+        { label: 'By', cls: 'nowrap', render: (r) => r.source === 'ai' || r.source === 'ai_candidate' ? sourceBadge('ai') : h('span', { text: str(r.created_by) || '—' }) },
+        { label: 'Status', render: (r) => h('span', { class: 'badge plain', text: LABEL_STATUS[r.status] || str(r.status) }) },
+        { label: 'Note', cls: 'wrap', render: (r) => str(r.note) || '—' },
+        { label: 'When', cls: 'nowrap', render: (r) => timeEl(r.decided_ts || r.ts) },
+      ], labels, { class: 'compact' }));
+    }
     out.push(lb);
 
     // client
@@ -1609,9 +1704,7 @@
 
     // actions
     const bar = h('div', { class: 'drawer-actions' });
-    const formBox = h('div');
     if (can('analyst')) {
-      bar.appendChild(h('button', { type: 'button', class: 'btn', onclick: () => { formBox.replaceChildren(labelForm(ev, formBox)); formBox.querySelector('select').focus(); } }, icon('labels'), 'Label'));
       const aiBtn = h('button', { type: 'button', class: 'btn' }, icon('ai'), 'Request AI analysis');
       aiBtn.addEventListener('click', () => act(aiBtn, async () => {
         const r = await api('/api/ai/analyze/' + enc(ev.id), { method: 'POST' });
@@ -1623,25 +1716,8 @@
       bar.appendChild(h('button', { type: 'button', class: 'btn btn-danger', onclick: async () => { if (await blockDialog(clientIp, 'From event ' + shortId(ev.id))) loadDrawer(); } }, icon('controls'), cl.blocked_now ? 'Extend block' : 'Block IP'));
     }
     if (!bar.childNodes.length) bar.appendChild(h('p', { class: 'hint row' }, icon('lock'), 'Viewer role: read-only.'));
-    out.push(formBox, bar);
+    out.push(bar);
     return out;
-  }
-  function labelForm(ev, box) {
-    const sel = select(LABELS, ev.label && LABELS.indexOf(ev.label) >= 0 ? ev.label : 'NEEDS_REVIEW');
-    const note = h('textarea', { maxLength: 500, rows: 2, placeholder: 'Why? (optional)' });
-    const save = h('button', { type: 'submit', class: 'btn btn-primary', text: 'Save label' });
-    const f = h('form', { class: 'subform', 'aria-label': 'Label this event' }, field('Label', sel), field('Note', note),
-      h('div', { class: 'row' }, save, h('button', { type: 'button', class: 'btn', text: 'Cancel', onclick: () => box.replaceChildren() })));
-    f.addEventListener('submit', (e) => {
-      e.preventDefault();
-      act(save, async () => {
-        await api('/api/events/' + enc(ev.id) + '/label', { method: 'POST', body: { label: sel.value, note: note.value.trim() } });
-        toast('Label saved.', 'ok');
-        box.replaceChildren();
-        loadDrawer();
-      });
-    });
-    return f;
   }
   $('drawer-close').addEventListener('click', closeDrawer);
   $('drawer-scrim').addEventListener('click', closeDrawer);
@@ -2105,53 +2181,133 @@
   // ---- view: labels & datasets
   VIEWS.labels = function (root, params, ctx) {
     root.append(pageHead('Labels & datasets'));
-    if (!can('analyst')) { root.appendChild(stateBox('locked', 'Label review and datasets require the analyst role.')); return; }
-    root.appendChild(h('div', { class: 'callout callout-ai' }, icon('bot'), h('span', null, h('strong', { text: 'AI candidates are not ground truth. ' }), 'They are model suggestions and only count as training labels once a person approves them. A reviewer cannot approve their own label.')));
+    if (!can('analyst')) { root.appendChild(stateBox('locked', 'Labeling and datasets require the analyst role.')); return; }
+    root.appendChild(h('div', { class: 'callout' }, icon('labels'), h('span', null,
+      h('strong', { text: 'Labels apply as soon as you choose them. ' }),
+      'Change or remove any label at any time, here, in Events, or in an event’s details; the history is kept. ',
+      'AI suggestions are the only labels that wait: accept, dismiss, or pick another label.')));
     root.lastChild.style.marginBottom = '12px';
-    let status = 'candidate', source = 'all';
-    const queueCard = card('Review queue', { flush: true, actions: [
-      segmented([['candidate', 'Candidates'], ['approved', 'Approved'], ['rejected', 'Rejected']], status, (v) => { status = v; loadQueue(); }, 'Label status'),
-      select([['all', 'All sources'], ['ai_candidate', 'AI candidates'], ['operator', 'Operators'], ['rule', 'Rules']], source, { 'aria-label': 'Label source', onchange: (e) => { source = e.target.value; renderQueue(); } }),
-    ] });
-    root.appendChild(queueCard.el);
-    let labels = null;
-    async function loadQueue() {
-      queueCard.body.replaceChildren(stateBox('loading', 'Loading labels…'));
+    const VIEWS_ = [['suggested', 'AI suggestions'], ['confirmed', 'Labeled'], ['history', 'History']];
+    // Open on AI suggestions when some are waiting, otherwise on Labeled.
+    let view = params.get('view') || 'auto', filter = '';
+    if (view !== 'auto' && !VIEWS_.some((v) => v[0] === view)) view = 'auto';
+    const seg = segmented(VIEWS_, view === 'auto' ? 'suggested' : view, (v) => { view = v; picked.clear(); load(); }, 'Which labels');
+    const labelFilter = select([['', 'All labels']].concat(LABELS.map((l) => [l, labelName(l)])), '', { 'aria-label': 'Show only this label', onchange: (e) => { filter = e.target.value; load(); } });
+    const c = card('Labels', { flush: true, actions: [seg, labelFilter] });
+    root.appendChild(c.el);
+    const picked = new Set();
+    const bulk = h('div', { class: 'bulk-bar', hidden: true, role: 'region', 'aria-label': 'Selected labels' });
+    c.body.appendChild(bulk);
+    const list = h('div');
+    c.body.appendChild(list);
+    let rows = [], counts = {};
+
+    function eventLink(l) {
+      const e = l.event;
+      const text = e ? str(e.action) + ' · ' + str(e.method) + ' ' + str(e.path) + ' · ' + str(e.client_ip) : shortId(l.event_id);
+      return h('button', { type: 'button', class: 'btn-link mono ellipsis', text, title: e ? str(e.method) + ' ' + str(e.path) + ' from ' + str(e.client_ip) : '', onclick: (ev) => openEvent(l.event_id, ev.currentTarget) });
+    }
+    function tabNames() {
+      const btns = seg.querySelectorAll('button');
+      const n = counts.suggested || 0, m = counts.confirmed || 0;
+      btns[0].textContent = 'AI suggestions' + (n ? ' (' + full(n) + ')' : '');
+      btns[1].textContent = 'Labeled' + (m ? ' (' + full(m) + ')' : '');
+    }
+    function renderBulk() {
+      bulk.hidden = picked.size === 0 || view === 'history';
+      if (bulk.hidden) return;
+      const n = h('strong', { text: picked.size + ' selected' });
+      const clear = h('button', { type: 'button', class: 'btn btn-sm', text: 'Clear selection', onclick: () => { picked.clear(); render(); } });
+      if (view === 'suggested') {
+        const acc = h('button', { type: 'button', class: 'btn btn-sm btn-primary', text: 'Accept all' });
+        const dis = h('button', { type: 'button', class: 'btn btn-sm', text: 'Dismiss all' });
+        const run = (verb, b) => act(b, async () => {
+          for (const id of picked) await api('/api/labels/' + enc(id) + '/' + verb, { method: 'POST' });
+          toast((verb === 'accept' ? 'Accepted ' : 'Dismissed ') + picked.size + ' suggestion' + (picked.size === 1 ? '' : 's') + '.', 'ok');
+          picked.clear(); load();
+        });
+        acc.addEventListener('click', () => run('accept', acc));
+        dis.addEventListener('click', () => run('dismiss', dis));
+        bulk.replaceChildren(n, acc, dis, clear);
+      } else {
+        const sel = select([['', 'Change label to…']].concat(LABELS.map((l) => [l, labelName(l)])).concat([['__clear', 'Remove label']]), '', { 'aria-label': 'New label for the selected events' });
+        const apply = h('button', { type: 'button', class: 'btn btn-sm btn-primary', text: 'Apply' });
+        apply.addEventListener('click', () => {
+          if (!sel.value) { toast('Choose a label first.', 'warn'); sel.focus(); return; }
+          const ids = rows.filter((r) => picked.has(r.id)).map((r) => r.event_id);
+          act(apply, async () => {
+            const r = await api('/api/labels/bulk', { method: 'POST', body: { event_ids: ids, label: sel.value === '__clear' ? null : sel.value } });
+            toast('Updated ' + full(r.labeled) + ' event' + (r.labeled === 1 ? '' : 's') + '.', 'ok');
+            picked.clear(); load();
+          });
+        });
+        bulk.replaceChildren(n, sel, apply, clear);
+      }
+    }
+    function pickCol() {
+      const all = h('input', { type: 'checkbox', 'aria-label': 'Select all', checked: rows.length > 0 && picked.size === rows.length });
+      all.addEventListener('change', () => { picked.clear(); if (all.checked) for (const r of rows) picked.add(r.id); render(); });
+      return { label: all, cls: 'pick', render: (r) => {
+        const b = h('input', { type: 'checkbox', checked: picked.has(r.id), 'aria-label': 'Select' });
+        b.addEventListener('change', () => { if (b.checked) picked.add(r.id); else picked.delete(r.id); renderBulk(); });
+        return b;
+      } };
+    }
+    function render() {
+      tabNames();
+      renderBulk();
+      if (!rows.length) {
+        list.replaceChildren(stateBox('empty', view === 'suggested' ? 'No AI suggestions waiting. When AI analysis disagrees with the firewall, its suggestion appears here.'
+          : view === 'confirmed' ? 'No labeled events yet. Label events from the Label column in Events or from an event’s details.' : 'No label changes yet.'));
+        return;
+      }
+      let cols;
+      if (view === 'suggested') {
+        cols = [pickCol(),
+          { label: 'Event', cls: 'cell-path', render: eventLink },
+          { label: 'AI suggests', render: (l) => h('span', { class: 'row' }, labelBadge(l.label), l.ai && isFinite(l.ai.confidence) ? h('span', { class: 'faint', text: pct(l.ai.confidence) + ' sure', title: str(l.ai.explanation) }) : null) },
+          { label: 'Your label', render: (l) => labelPicker({ id: l.event_id, label: null }, () => load(), { placeholder: 'Pick another…' }) },
+          { label: 'When', cls: 'nowrap', render: (l) => timeEl(l.ts) },
+          { label: '', cls: 'actions', render: (l) => {
+            const acc = h('button', { type: 'button', class: 'btn btn-sm btn-primary', text: 'Accept', 'aria-label': 'Accept the suggestion ' + labelName(l.label) });
+            const dis = h('button', { type: 'button', class: 'btn btn-sm', text: 'Dismiss', 'aria-label': 'Dismiss the suggestion' });
+            acc.addEventListener('click', () => act(acc, async () => { await api('/api/labels/' + enc(l.id) + '/accept', { method: 'POST' }); toast('Labeled ' + labelName(l.label) + '.', 'ok'); load(); }));
+            dis.addEventListener('click', () => act(dis, async () => { await api('/api/labels/' + enc(l.id) + '/dismiss', { method: 'POST' }); toast('Suggestion dismissed.', 'ok'); load(); }));
+            return h('span', null, acc, dis);
+          } }];
+      } else if (view === 'confirmed') {
+        cols = [pickCol(),
+          { label: 'Event', cls: 'cell-path', render: eventLink },
+          { label: 'Label', render: (l) => labelPicker({ id: l.event_id, label: l.label }, () => load()) },
+          { label: 'By', cls: 'nowrap', render: (l) => str(l.created_by) || '—' },
+          { label: 'Note', cls: 'cell-path', render: (l) => h('span', { text: str(l.note) || '—', title: str(l.note) }) },
+          { label: 'When', cls: 'nowrap', render: (l) => timeEl(l.decided_ts || l.ts) }];
+      } else {
+        cols = [
+          { label: 'Event', cls: 'cell-path', render: eventLink },
+          { label: 'Label', render: (l) => l.label ? labelBadge(l.label) : h('span', { class: 'faint', text: 'none' }) },
+          { label: 'By', cls: 'nowrap', render: (l) => l.source === 'ai' ? sourceBadge('ai') : h('span', { text: str(l.created_by) || '—' }) },
+          { label: 'Status', render: (l) => h('span', { class: 'badge plain', text: LABEL_STATUS[l.status] || str(l.status) }) },
+          { label: 'When', cls: 'nowrap', render: (l) => timeEl(l.decided_ts || l.ts) }];
+      }
+      keepFocus(list, () => list.replaceChildren(table(cols, rows, { class: 'compact', key: (l) => l.id })));
+    }
+    async function load() {
+      if (!rows.length) list.replaceChildren(stateBox('loading', 'Loading labels…'));
       try {
-        const r = await api('/api/labels' + qs({ status }));
+        const r = await api('/api/labels' + qs({ view: view === 'auto' ? 'suggested' : view, label: filter }));
         if (!ctx.alive) return;
-        labels = Array.isArray(r.labels) ? r.labels : [];
-        renderQueue();
-      } catch (e) { if (ctx.alive && e.status !== 401) queueCard.body.replaceChildren(stateBox('error', e.message)); }
+        if (view === 'auto') {
+          view = 'suggested';
+          if (!(r.counts && r.counts.suggested)) { seg.querySelectorAll('button')[1].click(); return; }
+        }
+        rows = Array.isArray(r.labels) ? r.labels : [];
+        counts = r.counts || {};
+        for (const id of [...picked]) if (!rows.some((x) => x.id === id)) picked.delete(id);
+        render();
+      } catch (e) { if (ctx.alive && e.status !== 401) list.replaceChildren(stateBox('error', e.message)); }
     }
-    function renderQueue() {
-      if (!labels) return;
-      const list = labels.filter((l) => source === 'all' || l.source === source);
-      if (!list.length) { queueCard.body.replaceChildren(stateBox('empty', status === 'candidate' ? 'Nothing waiting for review. AI analysis suggests labels here; anyone can also label an event from its details.' : 'No labels with this status.')); return; }
-      queueCard.body.replaceChildren(table([
-        { label: 'Label', render: (l) => labelBadge(l.label) },
-        { label: 'Source', render: (l) => sourceBadge(l.source) },
-        { label: 'Event', cls: 'cell-path', render: (l) => {
-          const e = l.event;
-          if (!e) return h('button', { type: 'button', class: 'btn-link mono', text: shortId(l.event_id), onclick: (ev) => openEvent(l.event_id, ev.currentTarget) });
-          return h('button', { type: 'button', class: 'btn-link mono ellipsis', title: str(e.method) + ' ' + str(e.path) + ' from ' + str(e.client_ip), onclick: (ev) => openEvent(l.event_id, ev.currentTarget) },
-            str(e.action) + ' · ' + str(e.method) + ' ' + str(e.path) + ' · ' + str(e.client_ip));
-        } },
-        { label: 'Reviewer', render: (l) => str(l.reviewer) || '—' },
-        { label: 'Note', cls: 'wrap', render: (l) => str(l.note) || '—' },
-        { label: 'When', render: (l) => timeEl(l.ts) },
-        { label: '', cls: 'actions', render: (l) => {
-          if (l.status !== 'candidate') return stBadge(l.status);
-          const mine = S.me && l.reviewer && l.reviewer === S.me.name;
-          const ap = h('button', { type: 'button', class: 'btn btn-sm btn-primary', text: 'Approve', disabled: !!mine, title: mine ? 'You created this label; another reviewer must approve it.' : '' });
-          const rj = h('button', { type: 'button', class: 'btn btn-sm', text: 'Reject' });
-          const run = (verb, b) => act(b, async () => { await api('/api/labels/' + enc(l.id) + '/' + verb, { method: 'POST' }); toast('Label ' + (verb === 'approve' ? 'approved' : 'rejected') + '.', 'ok'); loadQueue(); });
-          ap.addEventListener('click', () => run('approve', ap));
-          rj.addEventListener('click', () => run('reject', rj));
-          return h('span', null, ap, rj);
-        } },
-      ], list, { class: 'compact', caption: 'Label review queue' }));
-    }
+    load();
 
     const ds = card('Datasets', { flush: true });
     ds.el.style.marginTop = 'var(--gap)';
@@ -2163,7 +2319,7 @@
       const splitT = h('input', { type: 'radio', name: 'split', value: 'temporal', checked: true, id: uid('sp') });
       const splitE = h('input', { type: 'radio', name: 'split', value: 'entity', id: uid('sp') });
       const inc = h('input', { type: 'checkbox', id: uid('inc') });
-      const warn = h('div', { class: 'callout callout-warn', hidden: true }, icon('bot'), h('span', null, h('strong', { text: 'Including AI candidates. ' }), 'Unreviewed model suggestions will be mixed into the training data. They are not ground truth and can teach a model its own mistakes.'));
+      const warn = h('div', { class: 'callout callout-warn', hidden: true }, icon('bot'), h('span', null, h('strong', { text: 'Including AI suggestions. ' }), 'Suggestions nobody has accepted go into a separate candidates file, never the training splits. They are not ground truth.'));
       inc.addEventListener('change', () => { warn.hidden = !inc.checked; });
       const btn = h('button', { type: 'submit', class: 'btn btn-primary' }, icon('download'), 'Export dataset');
       const res = h('div');
@@ -2171,7 +2327,7 @@
         h('fieldset', { class: 'plainset' }, h('legend', { class: 'muted', text: 'Split' }),
           h('label', { for: splitT.id, class: 'row' }, splitT, 'Temporal (train on older, test on newer)'),
           h('label', { for: splitE.id, class: 'row' }, splitE, 'Entity (no client appears in more than one split)')),
-        h('label', { for: inc.id, class: 'row' }, inc, 'Include unreviewed AI candidates'), warn, h('div', null, btn), res);
+        h('label', { for: inc.id, class: 'row' }, inc, 'Also export waiting AI suggestions (separate file)'), warn, h('div', null, btn), res);
       f.addEventListener('submit', (e) => {
         e.preventDefault();
         act(btn, async () => {
@@ -2216,7 +2372,6 @@
         ], list, { class: 'compact' }) : stateBox('empty', 'No dataset exported yet.'));
       } catch (e) { if (ctx.alive && e.status !== 401) dsList.replaceChildren(stateBox('error', e.message)); }
     }
-    loadQueue();
     loadDatasets();
   };
 

@@ -5,6 +5,7 @@
 //! audit, policy versions) is low-rate and written directly. Readers use a
 //! separate connection.
 
+use std::collections::HashMap;
 use std::path::Path;
 use std::time::Duration;
 
@@ -335,6 +336,7 @@ impl Store {
         }
         let w = open_conn(path)?;
         w.execute_batch(SCHEMA).map_err(e)?;
+        migrate_labels(&w)?;
         // The database holds redacted traffic data: owner-only access.
         #[cfg(unix)]
         {
@@ -778,30 +780,103 @@ impl Store {
 
     // ---- labels -------------------------------------------------------
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn add_label(
+    /// Set (or with `None`, clear) the event's label. A person's label is
+    /// final at once: it replaces the current one (kept as `superseded`),
+    /// and a pending AI suggestion is recorded as `accepted` or `overridden`.
+    /// Returns the new label's id.
+    pub fn set_label(
         &self,
         event_id: &str,
-        label: &str,
-        source: &str,
-        status: &str,
+        label: Option<&str>,
         note: &str,
-        created_by: &str,
+        by: &str,
         policy_version: Option<i64>,
-        model_version: Option<&str>,
-    ) -> Result<i64> {
-        let c = self.write.lock();
-        c.execute(
-            "INSERT INTO labels (event_id, label, source, status, note, created_by, ts, policy_version, model_version) \
-             VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
-            params![event_id, label, source, status, note, created_by, now_ms(), policy_version, model_version],
+    ) -> Result<Option<i64>> {
+        let mut c = self.write.lock();
+        let tx = c.transaction().map_err(e)?;
+        let now = now_ms();
+        let current: Option<String> = tx
+            .query_row(
+                "SELECT label FROM labels WHERE event_id = ?1 AND status = 'confirmed'",
+                [event_id],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(e)?;
+        tx.execute(
+            "UPDATE labels SET status = 'superseded' WHERE event_id = ?1 AND status = 'confirmed'",
+            [event_id],
         )
         .map_err(e)?;
-        let id = c.last_insert_rowid();
-        if status == "approved" || source == "operator" {
-            Self::set_event_label(&c, event_id, Some(label))?;
-        }
+        tx.execute(
+            "UPDATE labels SET status = CASE WHEN label = ?2 THEN 'accepted' ELSE 'overridden' END, \
+             reviewer = ?3, decided_ts = ?4 WHERE event_id = ?1 AND status = 'suggested'",
+            params![event_id, label.unwrap_or(""), by, now],
+        )
+        .map_err(e)?;
+        let id = match label {
+            Some(l) => {
+                tx.execute(
+                    "INSERT INTO labels (event_id, label, source, reviewer, status, note, created_by, ts, decided_ts, policy_version) \
+                     VALUES (?1, ?2, 'operator', ?3, 'confirmed', ?4, ?3, ?5, ?5, ?6)",
+                    params![event_id, l, by, note, now, policy_version],
+                )
+                .map_err(e)?;
+                Some(tx.last_insert_rowid())
+            }
+            None => {
+                if current.is_some() {
+                    // Keep a record that the label was removed.
+                    tx.execute(
+                        "INSERT INTO labels (event_id, label, source, reviewer, status, note, created_by, ts, decided_ts) \
+                         VALUES (?1, '', 'operator', ?2, 'cleared', ?3, ?2, ?4, ?4)",
+                        params![event_id, by, note, now],
+                    )
+                    .map_err(e)?;
+                }
+                None
+            }
+        };
+        Self::set_event_label(&tx, event_id, label)?;
+        tx.commit().map_err(e)?;
         Ok(id)
+    }
+
+    /// An AI suggestion, kept until a person accepts, overrides or dismisses
+    /// it. Skipped when the event already has a person's label or the same
+    /// suggestion is pending.
+    pub fn add_suggestion(&self, event_id: &str, label: &str, model: &str) -> Result<Option<i64>> {
+        let c = self.write.lock();
+        let busy: i64 = c
+            .query_row(
+                "SELECT COUNT(*) FROM labels WHERE event_id = ?1 AND (status = 'confirmed' OR (status = 'suggested' AND label = ?2))",
+                params![event_id, label],
+                |r| r.get(0),
+            )
+            .map_err(e)?;
+        if busy > 0 {
+            return Ok(None);
+        }
+        c.execute(
+            "INSERT INTO labels (event_id, label, source, status, note, created_by, ts, model_version) \
+             VALUES (?1, ?2, 'ai', 'suggested', '', ?3, ?4, ?5)",
+            params![event_id, label, format!("ai:{model}"), now_ms(), model],
+        )
+        .map_err(e)?;
+        Ok(Some(c.last_insert_rowid()))
+    }
+
+    /// Turn down a pending AI suggestion. False when it is not pending.
+    pub fn dismiss_suggestion(&self, id: i64, by: &str) -> Result<bool> {
+        let n = self
+            .write
+            .lock()
+            .execute(
+                "UPDATE labels SET status = 'dismissed', reviewer = ?2, decided_ts = ?3 WHERE id = ?1 AND status = 'suggested'",
+                params![id, by, now_ms()],
+            )
+            .map_err(e)?;
+        Ok(n > 0)
     }
 
     pub fn get_label(&self, id: i64) -> Result<Option<Label>> {
@@ -811,49 +886,37 @@ impl Store {
             .map_err(e)
     }
 
-    pub fn labels(&self, status: Option<&str>, limit: usize) -> Result<Vec<Label>> {
+    /// Labels in `status` (all when `None`), newest first, optionally only
+    /// one label value.
+    pub fn labels(&self, status: Option<&str>, label: Option<&str>, limit: usize) -> Result<Vec<Label>> {
         let c = self.read.lock();
-        let (sql, arg) = match status {
-            Some(s) => (format!("{LABEL_COLS} WHERE status = ?1 ORDER BY ts DESC LIMIT {limit}"), Some(s)),
-            None => (format!("{LABEL_COLS} ORDER BY ts DESC LIMIT {limit}"), None),
-        };
+        let sql = format!(
+            "{LABEL_COLS} WHERE (?1 IS NULL OR status = ?1) AND (?2 IS NULL OR label = ?2) ORDER BY COALESCE(decided_ts, ts) DESC, id DESC LIMIT {}",
+            limit.clamp(1, 1_000_000)
+        );
         let mut st = c.prepare(&sql).map_err(e)?;
-        let rows = match arg {
-            Some(a) => st.query_map([a], label_row).map_err(e)?.collect::<std::result::Result<Vec<_>, _>>(),
-            None => st.query_map([], label_row).map_err(e)?.collect(),
-        };
-        rows.map_err(e)
+        let rows = st.query_map(params![status, label], label_row).map_err(e)?;
+        rows.collect::<std::result::Result<Vec<_>, _>>().map_err(e)
     }
 
-    pub fn approved_labels(&self) -> Result<Vec<Label>> {
-        self.labels(Some("approved"), 1_000_000)
+    /// Count of labels per status.
+    pub fn label_counts(&self) -> Result<HashMap<String, i64>> {
+        let c = self.read.lock();
+        let mut st = c.prepare("SELECT status, COUNT(*) FROM labels GROUP BY status").map_err(e)?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))).map_err(e)?;
+        rows.collect::<std::result::Result<HashMap<_, _>, _>>().map_err(e)
     }
 
-    pub fn decide_label(&self, id: i64, status: &str, reviewer: &str) -> Result<()> {
-        let c = self.write.lock();
-        c.execute(
-            "UPDATE labels SET status = ?1, reviewer = ?2, decided_ts = ?3 WHERE id = ?4",
-            params![status, reviewer, now_ms(), id],
-        )
-        .map_err(e)?;
-        let row: Option<(String, String)> = c
-            .query_row("SELECT event_id, label FROM labels WHERE id = ?1", [id], |r| {
-                Ok((r.get(0)?, r.get(1)?))
-            })
-            .optional()
-            .map_err(e)?;
-        if let Some((event_id, label)) = row
-            && status == "approved"
-        {
-            Self::set_event_label(&c, &event_id, Some(&label))?;
-        }
-        Ok(())
+    /// The current label of every labeled event (ground truth for datasets).
+    pub fn confirmed_labels(&self) -> Result<Vec<Label>> {
+        self.labels(Some("confirmed"), None, 1_000_000)
     }
 
+    /// Every label row of an event, newest first: its history.
     pub fn labels_for_event(&self, event_id: &str) -> Result<Vec<Label>> {
         let c = self.read.lock();
         let mut st = c
-            .prepare(&format!("{LABEL_COLS} WHERE event_id = ?1 ORDER BY ts DESC"))
+            .prepare(&format!("{LABEL_COLS} WHERE event_id = ?1 ORDER BY COALESCE(decided_ts, ts) DESC, id DESC"))
             .map_err(e)?;
         let rows = st.query_map([event_id], label_row).map_err(e)?;
         rows.collect::<std::result::Result<Vec<_>, _>>().map_err(e)
@@ -1253,6 +1316,54 @@ impl Store {
     }
 }
 
+/// Bring labels from the old review flow (candidate / approved / rejected,
+/// several per event) to the current one: one `confirmed` label per event,
+/// set by a person; AI labels `suggested` until a person acts. Idempotent.
+fn migrate_labels(c: &Connection) -> Result<()> {
+    let old: i64 = c
+        .query_row(
+            "SELECT COUNT(*) FROM labels WHERE status IN ('candidate', 'approved', 'rejected') OR source = 'ai_candidate'",
+            [],
+            |r| r.get(0),
+        )
+        .map_err(e)?;
+    if old == 0 {
+        return Ok(());
+    }
+    c.execute_batch(
+        "BEGIN;
+         UPDATE labels SET status = 'suggested' WHERE status = 'candidate' AND source = 'ai_candidate';
+         UPDATE labels SET status = 'confirmed' WHERE status IN ('candidate', 'approved');
+         UPDATE labels SET status = 'dismissed' WHERE status = 'rejected';
+         UPDATE labels SET source = 'ai' WHERE source = 'ai_candidate';
+         UPDATE labels SET status = 'superseded' WHERE status = 'confirmed' AND id NOT IN (
+             SELECT (SELECT l2.id FROM labels l2 WHERE l2.event_id = l1.event_id AND l2.status = 'confirmed'
+                     ORDER BY COALESCE(l2.decided_ts, l2.ts) DESC, l2.id DESC LIMIT 1)
+             FROM labels l1 WHERE l1.status = 'confirmed' GROUP BY l1.event_id);
+         UPDATE labels SET status = 'overridden' WHERE status = 'suggested' AND event_id IN
+             (SELECT event_id FROM labels WHERE status = 'confirmed');
+         COMMIT;",
+    )
+    .map_err(e)?;
+    // Events show their current label only.
+    let pairs: Vec<(String, Option<String>)> = {
+        let mut st = c
+            .prepare(
+                "SELECT DISTINCT l.event_id, (SELECT label FROM labels c WHERE c.event_id = l.event_id AND c.status = 'confirmed')                  FROM labels l",
+            )
+            .map_err(e)?;
+        st.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .map_err(e)?
+            .collect::<std::result::Result<_, _>>()
+            .map_err(e)?
+    };
+    for (id, label) in pairs {
+        Store::set_event_label(c, &id, label.as_deref())?;
+    }
+    log::info!("Labels migrated to the one-label-per-event model ({old} rows)");
+    Ok(())
+}
+
 const LABEL_COLS: &str = "SELECT id, event_id, label, source, reviewer, status, note, created_by, ts, decided_ts, policy_version, model_version FROM labels";
 
 fn label_row(r: &rusqlite::Row) -> rusqlite::Result<Label> {
@@ -1385,16 +1496,79 @@ mod tests {
     }
 
     #[test]
-    fn labels_and_review_flow() {
+    fn a_persons_label_is_final_and_editable() {
         let s = Store::memory();
         s.insert_events(&[ev("a", 1, "block")]).unwrap();
-        let id = s
-            .add_label("a", "MALICIOUS_CONFIRMED", "ai_candidate", "candidate", "", "ai", None, Some("m1"))
-            .unwrap();
-        assert!(s.get_event("a").unwrap().unwrap().label.is_none(), "candidate does not label the event");
-        s.decide_label(id, "approved", "bob").unwrap();
-        assert_eq!(s.get_event("a").unwrap().unwrap().label.as_deref(), Some("MALICIOUS_CONFIRMED"));
-        assert_eq!(s.approved_labels().unwrap().len(), 1);
+        let first = s.set_label("a", Some("SUSPICIOUS"), "", "alfi", None).unwrap().unwrap();
+        assert_eq!(s.get_event("a").unwrap().unwrap().label.as_deref(), Some("SUSPICIOUS"));
+        assert_eq!(s.confirmed_labels().unwrap().len(), 1, "no review step");
+        // Change it: one current label, the old one kept as history.
+        s.set_label("a", Some("MALICIOUS_CONFIRMED"), "seen again", "alfi", None).unwrap();
+        let cur = s.confirmed_labels().unwrap();
+        assert_eq!((cur.len(), cur[0].label.as_str()), (1, "MALICIOUS_CONFIRMED"));
+        assert_eq!(s.get_label(first).unwrap().unwrap().status, "superseded");
+        // Clear it.
+        s.set_label("a", None, "", "alfi", None).unwrap();
+        assert!(s.get_event("a").unwrap().unwrap().label.is_none());
+        assert!(s.confirmed_labels().unwrap().is_empty());
+        let hist: Vec<_> = s.labels_for_event("a").unwrap().into_iter().map(|l| l.status).collect();
+        assert_eq!(hist, ["cleared", "superseded", "superseded"]);
+    }
+
+    #[test]
+    fn ai_suggestions_wait_for_a_person() {
+        let s = Store::memory();
+        s.insert_events(&[ev("a", 1, "block"), ev("b", 2, "block"), ev("c", 3, "pass")]).unwrap();
+        let sa = s.add_suggestion("a", "MALICIOUS_CONFIRMED", "m1").unwrap().unwrap();
+        assert!(s.add_suggestion("a", "MALICIOUS_CONFIRMED", "m1").unwrap().is_none(), "no duplicates");
+        assert!(s.get_event("a").unwrap().unwrap().label.is_none(), "a suggestion does not label the event");
+        // Accepting = labeling with the same value.
+        s.set_label("a", Some("MALICIOUS_CONFIRMED"), "", "alfi", None).unwrap();
+        assert_eq!(s.get_label(sa).unwrap().unwrap().status, "accepted");
+        // Labeling differently overrides it.
+        let sb = s.add_suggestion("b", "MALICIOUS_CONFIRMED", "m1").unwrap().unwrap();
+        s.set_label("b", Some("FALSE_POSITIVE"), "", "alfi", None).unwrap();
+        assert_eq!(s.get_label(sb).unwrap().unwrap().status, "overridden");
+        // Dismissed suggestions leave the event unlabeled.
+        let sc = s.add_suggestion("c", "SUSPICIOUS", "m1").unwrap().unwrap();
+        assert!(s.dismiss_suggestion(sc, "alfi").unwrap());
+        assert!(!s.dismiss_suggestion(sc, "alfi").unwrap());
+        assert!(s.get_event("c").unwrap().unwrap().label.is_none());
+        // No suggestions for events a person already labeled.
+        assert!(s.add_suggestion("a", "SUSPICIOUS", "m1").unwrap().is_none());
+        let counts = s.label_counts().unwrap();
+        assert_eq!((counts.get("confirmed"), counts.get("suggested")), (Some(&2), None));
+    }
+
+    #[test]
+    fn old_review_queue_rows_migrate() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("m.db");
+        {
+            let s = Store::open(&path).unwrap();
+            s.insert_events(&[ev("x", 1, "block"), ev("y", 2, "block")]).unwrap();
+            let c = s.write.lock();
+            for (ev_id, label, source, status, ts) in [
+                ("x", "SUSPICIOUS", "operator", "candidate", 10),
+                ("x", "MALICIOUS_CONFIRMED", "operator", "approved", 20),
+                ("y", "FALSE_POSITIVE", "operator", "rejected", 10),
+                ("y", "MALICIOUS_CONFIRMED", "ai_candidate", "candidate", 11),
+            ] {
+                c.execute(
+                    "INSERT INTO labels (event_id, label, source, status, note, created_by, ts) VALUES (?1,?2,?3,?4,'','alfi',?5)",
+                    params![ev_id, label, source, status, ts],
+                )
+                .unwrap();
+            }
+        }
+        let s = Store::open(&path).unwrap();
+        let cur = s.confirmed_labels().unwrap();
+        assert_eq!(cur.len(), 1);
+        assert_eq!((cur[0].event_id.as_str(), cur[0].label.as_str()), ("x", "MALICIOUS_CONFIRMED"));
+        assert_eq!(s.get_event("x").unwrap().unwrap().label.as_deref(), Some("MALICIOUS_CONFIRMED"));
+        assert!(s.get_event("y").unwrap().unwrap().label.is_none());
+        assert_eq!(s.labels(Some("suggested"), None, 10).unwrap().len(), 1);
+        assert_eq!(s.labels(Some("dismissed"), None, 10).unwrap().len(), 1);
     }
 
     #[test]
@@ -1415,7 +1589,7 @@ mod tests {
     fn retention_keeps_labeled_events() {
         let s = Store::memory();
         s.insert_events(&[ev("old", 1, "pass"), ev("old-labeled", 2, "pass"), ev("new", 1000, "pass")]).unwrap();
-        s.add_label("old-labeled", "ALLOWED_NORMAL", "operator", "candidate", "", "alice", None, None)
+        s.set_label("old-labeled", Some("ALLOWED_NORMAL"), "", "alice", None)
             .unwrap();
         s.retain(500, 1_000_000).unwrap();
         assert!(s.get_event("old").unwrap().is_none());

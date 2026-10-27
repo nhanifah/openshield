@@ -150,10 +150,11 @@
   out.lowContrast = low.slice(0, 15);
   out.lowContrastCount = low.length;
 
-  // 8. Small tap targets at phone width. A checkbox's target is its label row.
+  // 8. Small tap targets at phone width (cells of data tables and the virtual
+  // event grid, whose rows have a fixed height, are exempt). A checkbox's target is its label row.
   const target = (el) => (el.matches('input[type=checkbox], input[type=radio]') && el.closest('label')) || el;
   out.smallTargets = innerWidth < 760
-    ? all.filter((el) => el.matches('button, a[href], input, select') && target(el).getBoundingClientRect().height < 32 && !el.closest('td')).slice(0, 12).map((el) => Math.round(el.getBoundingClientRect().height) + 'px ' + name(el))
+    ? all.filter((el) => el.matches('button, a[href], input, select') && target(el).getBoundingClientRect().height < 32 && !el.closest('td, th, .vrow, .vhead')).slice(0, 12).map((el) => Math.round(el.getBoundingClientRect().height) + 'px ' + name(el))
     : [];
 
   // 9. Keyboard stops nobody can see: focusable controls placed beside the

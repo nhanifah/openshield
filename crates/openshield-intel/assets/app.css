@@ -287,9 +287,9 @@ table.tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 
 /* virtual list */
 .vlist { position: relative; overflow: auto; height: calc(100vh - 260px); min-height: 320px; border-top: 1px solid var(--border); }
-.vlist-inner { position: relative; min-width: 1110px; }
-/* Time, Action, Status, Request, Client, Origin, Rules, Anomaly, AI, Label. Origin fits "ID-JK · AS4294967295". */
-.vhead, .vrow { display: grid; grid-template-columns: 104px 104px 64px minmax(160px, 3fr) minmax(112px, 1fr) minmax(150px, 1.1fr) minmax(96px, 1fr) 80px minmax(148px, 1fr) minmax(92px, .9fr); align-items: center; }
+.vlist-inner { position: relative; min-width: 1210px; }
+/* Select, Time, Action, Status, Request, Client, Origin, Rules, Anomaly, AI, Label. Origin fits "ID-JK · AS4294967295". */
+.vhead, .vrow { display: grid; grid-template-columns: 36px 104px 104px 64px minmax(160px, 3fr) minmax(112px, 1fr) minmax(150px, 1.1fr) minmax(96px, 1fr) 80px minmax(148px, 1fr) minmax(150px, 1fr); align-items: center; }
 .vhead { position: sticky; top: 0; z-index: 2; background: var(--surface-2); border-bottom: 1px solid var(--border); font-size: 11px; color: var(--text-2); text-transform: uppercase; letter-spacing: .04em; font-weight: 600; height: 32px; }
 .vhead > div, .vrow > div { padding: 0 8px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .vbody { position: relative; }
@@ -554,3 +554,22 @@ input[readonly]:not([type=checkbox]):not([type=radio]) { background: var(--surfa
 .custom-html textarea, .mono-area { width: 100%; font-family: var(--mono); font-size: 12px; margin-top: 8px; }
 .settings-form textarea { width: 100%; }
 .preview-head { justify-content: space-between; margin-bottom: 8px; }
+
+/* Labeling */
+.label-select { min-height: 28px; height: 28px; padding: 0 6px 0 8px; font-size: 12px; max-width: 100%; border-left: 3px solid var(--border-strong); }
+.label-select[data-k="bad"] { border-left-color: var(--c-block); }
+.label-select[data-k="susp"] { border-left-color: var(--c-suspicious); }
+.label-select[data-k="warn"] { border-left-color: var(--c-challenge); }
+.label-select[data-k="ok"] { border-left-color: var(--c-pass); }
+.pick { width: 36px; text-align: center; }
+.tbl th.pick, .tbl td.pick { width: 36px; padding-left: 10px; padding-right: 4px; }
+.bulk-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 14px; background: color-mix(in srgb, var(--accent) 8%, var(--surface)); border-bottom: 1px solid var(--border); }
+.card-head .bulk-bar { padding: 0; background: none; border: 0; margin-left: auto; }
+.bulk-bar select { min-height: 28px; }
+.label-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.label-row input { flex: 1; min-width: 180px; }
+.suggestion { margin-top: 10px; align-items: center; flex-wrap: wrap; }
+.suggestion > span:nth-child(2) { flex: 1; }
+.vhead > .pick, .vrow > .pick { padding: 0; display: flex; align-items: center; justify-content: center; overflow: visible; }
+.pick input[type=checkbox] { margin: 0; }
+@media (max-width: 760px) { .chip button { min-width: 32px; min-height: 32px; } }

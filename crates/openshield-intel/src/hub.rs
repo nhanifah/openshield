@@ -187,6 +187,16 @@ impl EventHub {
         self.recent.read().iter().rev().find(|e| e.id == id).map(|e| (**e).clone())
     }
 
+    /// Keep the in-memory copy of an event in step with its new label.
+    pub fn relabel_recent(&self, id: &str, label: Option<&str>) {
+        let mut r = self.recent.write();
+        if let Some(slot) = r.iter_mut().rev().find(|e| e.id == id) {
+            let mut ev = (**slot).clone();
+            ev.label = label.map(str::to_string);
+            *slot = std::sync::Arc::new(ev);
+        }
+    }
+
     /// An event from memory (freshest) or the store.
     pub fn event(&self, id: &str) -> Result<Option<SecurityEvent>, String> {
         if let Some(e) = self.recent_event(id) {
@@ -592,7 +602,7 @@ fn db_writer(store: Arc<Store>, rx: std::sync::mpsc::Receiver<DbMsg>, counters: 
                 }
             }
             DbMsg::Candidate { event_id, label, model } => {
-                let _ = store.add_label(&event_id, &label, "ai_candidate", "candidate", "", &format!("ai:{model}"), None, Some(&model));
+                let _ = store.add_suggestion(&event_id, &label, &model);
             }
         }
     }

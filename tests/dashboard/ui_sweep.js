@@ -7,7 +7,7 @@
 // Set the width with the browser tool (1600, 1282, 1024, 375) and run again.
 // The sweep restores the theme and view it started from.
 (async () => {
-  const ROUTES = ['overview', 'live', 'events', 'alerts', 'controls', 'policy', 'labels', 'ai', 'audit',
+  const ROUTES = ['overview', 'live', 'events', 'alerts', 'controls', 'policy', 'labels', 'labels?view=confirmed', 'labels?view=history', 'ai', 'audit',
     'settings?tab=ai', 'settings?tab=challenge', 'settings?tab=users', 'settings?tab=storage', 'settings?tab=geo', 'settings?tab=pages', 'settings?tab=security'];
   const wait = (ms) => new Promise((r) => setTimeout(r, ms));
   // A view is ready when it has no skeleton rows or loading boxes left.

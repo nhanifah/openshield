@@ -175,19 +175,29 @@ The policy YAML holds only WAF keys (`rulesets`, `lists`, `scores`, `detection_o
 
 ### Labels and datasets
 
+Each event has at most one current label. A label set by a person applies at once: no review step. It can be changed or removed at any time, and every change is kept as history and written to the audit log. Only AI suggestions wait for a person, who accepts, dismisses or overrides them (by setting a different label).
+
 | Method | Path | Role | Notes |
 | --- | --- | --- | --- |
-| POST | `/api/events/{id}/label` | analyst | `{"label": "FALSE_POSITIVE", "note": "…"}`; label must be one of the values below |
-| GET | `/api/labels?status=candidate` | analyst | `{"labels": [{"id","event_id","label","source","reviewer","status","note","ts","event": EventSummary}]}` |
-| POST | `/api/labels/{id}/approve` | analyst | a reviewer cannot approve their own label |
-| POST | `/api/labels/{id}/reject` | analyst | — |
+| PUT | `/api/events/{id}/label` | analyst | `{"label": "FALSE_POSITIVE", "note": "…"}` sets or changes the label; `{"label": null}` removes it. (`POST` is accepted too.) |
+| POST | `/api/labels/bulk` | analyst | `{"event_ids": [...], "label": "…" \| null, "note"}`, up to 500 events → `{"labeled", "not_found"}` |
+| GET | `/api/labels?view=suggested\|confirmed\|history&label=` | analyst | `{"labels": [{"id","event_id","label","source","status","created_by","reviewer","note","ts","decided_ts","event": EventSummary,"ai"}], "counts": {status: n}}` |
+| POST | `/api/labels/{id}/accept` | analyst | Accept an AI suggestion: the event gets that label. `409` if it was already acted on |
+| POST | `/api/labels/{id}/dismiss` | analyst | Dismiss an AI suggestion; the event stays unlabeled |
 | GET | `/api/datasets` | analyst | `{"datasets": [{"version","ts","actor","stats"}]}` |
-| POST | `/api/datasets/export` | admin | `{"split": "temporal"\|"entity", "include_candidates": false}` → `{"version", "stats"}` |
+| POST | `/api/datasets/export` | admin | `{"split": "temporal"\|"entity", "include_candidates": false}` → `{"version", "stats"}`. Splits hold current labels only; waiting suggestions go to a separate `candidates.jsonl` when asked |
 | GET | `/api/datasets/{version}/{split}` | admin | JSONL download; `split` is `train`, `validation`, `test` or `manifest` |
 
-Labels: `ALLOWED_NORMAL`, `ALLOWED_UNUSUAL`, `SUSPICIOUS`, `MALICIOUS_CONFIRMED`, `POLICY_VIOLATION`, `FALSE_POSITIVE`, `FALSE_NEGATIVE`, `UNKNOWN`, `NEEDS_REVIEW`.
+Labels: `ALLOWED_NORMAL`, `ALLOWED_UNUSUAL`, `SUSPICIOUS`, `MALICIOUS_CONFIRMED`, `POLICY_VIOLATION`, `FALSE_POSITIVE`, `FALSE_NEGATIVE`, `UNKNOWN`, `NEEDS_REVIEW` (the dashboard shows them as Normal, Unusual but fine, Suspicious, Malicious, and so on).
 
-Label `source`: `operator` (a person), `ai_candidate` (a model suggestion, never ground truth until a person approves it), `rule` (derived from a rule match). `status`: `candidate`, `approved`, `rejected`.
+Label `source`: `operator` (a person) or `ai`. `status`:
+- `confirmed`: the event's current label.
+- `superseded`: replaced by a later label.
+- `cleared`: the label was removed.
+- `suggested`: an AI suggestion waiting for a person.
+- `accepted`, `overridden`, `dismissed`: what a person did with a suggestion. These also measure how often the model is right.
+
+Labels from the earlier review flow (`candidate` / `approved` / `rejected`) are migrated on start: a person's labels become `confirmed`, newest per event.
 
 ### AI
 
