@@ -134,6 +134,16 @@ impl AsRef<SecurityEvent> for SecurityEvent {
 }
 
 impl SecurityEvent {
+    /// True when a rule matched and part of the query or body was masked by
+    /// redaction, so the value that triggered the rule may be hidden (only
+    /// its shape is kept). Labels on such events cannot be checked against
+    /// the payload.
+    pub fn evidence_redacted(&self) -> bool {
+        use openshield_core::redact::contains_mask;
+        !self.matched_rules.is_empty()
+            && (contains_mask(&self.query) || self.body_excerpt.as_deref().is_some_and(contains_mask))
+    }
+
     pub fn summary(&self) -> EventSummary {
         EventSummary {
             id: self.id.clone(),

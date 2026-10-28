@@ -1596,11 +1596,13 @@
       tg.addEventListener('click', () => { const raw = tg.getAttribute('aria-pressed') !== 'true'; tg.setAttribute('aria-pressed', String(raw)); tg.textContent = raw ? 'Show decoded' : 'Show raw'; reqEl.textContent = raw ? reqText : decoded; });
       out.push(h('div', { class: 'row' }, h('span', { class: 'faint', text: 'Shown URL-decoded.' }), tg));
     }
+    if (ev.evidence_redacted) out.push(h('div', { class: 'callout callout-warn' }, icon('eye'), h('span', null, h('strong', { text: 'The value that matched may be redacted. ' }),
+      'Masked values show only their shape (letters as a, digits as 9, attack keywords kept), and the AI saw the same. Label this Malicious only if the shape or other evidence confirms it.')));
 
     // decision
     const dec = section('Decision');
     const mr = Array.isArray(ev.matched_rules) ? ev.matched_rules : [];
-    dec.appendChild(mr.length ? h('div', { class: 'chips' }, mr.map((r) => h('span', { class: 'chip' }, h('span', { class: 'mono', text: str(r && r.id) }), actionBadge(r && r.action))))
+    dec.appendChild(mr.length ? h('div', { class: 'chips' }, mr.map((r) => h('span', { class: 'rule-hit' }, h('span', { class: 'mono', text: str(r && r.id) }), actionBadge(r && r.action))))
       : h('p', { class: 'muted', text: Array.isArray(ev.rules) && ev.rules.length ? 'Rules: ' + ev.rules.join(', ') : 'No rule matched. The request was passed by default.' }));
     const scores = objEntries(ev.scores);
     if (scores.length) dec.appendChild(h('div', { class: 'chips' }, h('span', { class: 'faint', text: 'Scores' }), scores.map(([k, v]) => h('span', { class: 'chip mono', text: k + ' ' + str(v) }))));

@@ -689,7 +689,7 @@ pub fn build_event(raw: &RawEvent, body_excerpt_bytes: usize) -> SecurityEvent {
     let body_excerpt = if matched && body_excerpt_bytes > 0 && !raw.body.is_empty() {
         let cut = &raw.body[..raw.body.len().min(body_excerpt_bytes)];
         let text = String::from_utf8_lossy(cut);
-        Some(redactor.body(Some(&content_type), &text).into_owned())
+        Some(redactor.body_shaped(Some(&content_type), &text).into_owned())
     } else {
         None
     };

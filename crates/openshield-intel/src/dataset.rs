@@ -102,6 +102,8 @@ pub struct ExportStats {
     /// Largest class count divided by smallest (over labels present).
     pub imbalance_ratio: Option<f64>,
     pub candidates: usize,
+    /// Exported records whose triggering value may be masked.
+    pub evidence_redacted: usize,
     pub files: BTreeMap<String, String>,
 }
 
@@ -127,6 +129,7 @@ pub fn features(ev: &SecurityEvent, sanitizer: &Sanitizer) -> Value {
         "bytes_in": ev.bytes_in,
         "bytes_out": ev.bytes_out,
         "prompt_injection_markers": input.prompt_injection_markers,
+        "evidence_redacted": ev.evidence_redacted(),
     })
 }
 
@@ -279,6 +282,10 @@ pub fn export(
         let sum = write_jsonl(&path, rs.iter().map(|r| serde_json::to_value(r).unwrap()))?;
         stats.files.insert(format!("{split}.jsonl"), sum);
     }
+    stats.evidence_redacted = records
+        .iter()
+        .filter(|r| r.features["evidence_redacted"] == Value::Bool(true))
+        .count();
     let mut totals: BTreeMap<&str, usize> = BTreeMap::new();
     for r in &records {
         *totals.entry(r.label.as_str()).or_default() += 1;
@@ -320,7 +327,9 @@ pub fn export(
             "Splits contain only labels set by a person.",
             "candidates.jsonl (if present) holds unreviewed suggestions and is not ground truth.",
             "Client identifiers are keyed hashes; raw IPs are not exported.",
-            "Values were redacted at capture time and again at export."
+            "Values were redacted at capture time and again at export.",
+            "On requests that matched a rule, masked values keep their shape: letters become a, digits 9, attack keywords and punctuation stay.",
+            "features.evidence_redacted marks records where a rule matched and part of the query or body was masked; the triggering value may be hidden, so consider excluding them from training."
         ],
     });
     let mpath = out_dir.join("manifest.json");
@@ -453,5 +462,25 @@ mod tests {
         // cap = ceil(200 * 0.05) = 10 from 6.6.6.6
         assert_eq!(stats.client_cap_removed, 140);
         assert_eq!(stats.records.values().sum::<usize>(), 60);
+    }
+
+    #[test]
+    fn evidence_redacted_marks_masked_values_on_matched_requests() {
+        let s = Sanitizer::new(Some(b"k".to_vec()), false);
+        let redactor = openshield_core::redact::Redactor::new(&Default::default());
+        let mut matched = ev("m", 1, "10.0.0.1", "/p", &redactor.query_shaped("session_id=x'+or+1=1&q=a"));
+        matched.matched_rules = vec![crate::event::MatchedRule { id: "sqli-args".into(), action: "block".into() }];
+        let f = features(&matched, &s);
+        assert_eq!(f["evidence_redacted"], true);
+        // The shape survives the export's second redaction pass.
+        // (query values stay URL-encoded in the export)
+        assert_eq!(f["query"][0][1], "%5BREDACTED%5D+len%3D9+shape%3Da%27+OR+9%3D9");
+
+        // Masked but no rule matched, or a rule matched with nothing masked.
+        let mut plain = ev("p", 2, "10.0.0.2", "/p", &redactor.query("session_id=abc"));
+        assert_eq!(features(&plain, &s)["evidence_redacted"], false);
+        plain.query = "q=1".into();
+        plain.matched_rules = matched.matched_rules.clone();
+        assert_eq!(features(&plain, &s)["evidence_redacted"], false);
     }
 }

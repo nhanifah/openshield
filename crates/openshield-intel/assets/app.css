@@ -566,6 +566,9 @@ input[readonly]:not([type=checkbox]):not([type=radio]) { background: var(--surfa
 .bulk-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 14px; background: color-mix(in srgb, var(--accent) 8%, var(--surface)); border-bottom: 1px solid var(--border); }
 .card-head .bulk-bar { padding: 0; background: none; border: 0; margin-left: auto; }
 .bulk-bar select { min-height: 28px; }
+.rule-hit { display: inline-flex; align-items: center; gap: 6px; }
+.label-row .label-select { height: auto; min-height: 30px; padding: 4px 8px; font-size: inherit; }
+@media (max-width: 760px) { .label-row .label-select { min-height: 40px; } }
 .label-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .label-row input { flex: 1; min-width: 180px; }
 .suggestion { margin-top: 10px; align-items: center; flex-wrap: wrap; }

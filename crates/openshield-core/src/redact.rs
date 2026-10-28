@@ -137,11 +137,21 @@ impl Redactor {
 
     /// Value to record for a header.
     pub fn header<'a>(&self, name: &str, value: &'a str) -> Cow<'a, str> {
+        self.header_as(name, value, false)
+    }
+
+    /// Like [`Redactor::header`], but a masked value keeps its [`shape`].
+    /// Used for requests that matched a rule, so the evidence stays readable.
+    pub fn header_shaped<'a>(&self, name: &str, value: &'a str) -> Cow<'a, str> {
+        self.header_as(name, value, true)
+    }
+
+    fn header_as<'a>(&self, name: &str, value: &'a str, shaped: bool) -> Cow<'a, str> {
         if !self.enabled {
             return Cow::Borrowed(value);
         }
         if self.headers.contains(&name.to_ascii_lowercase()) {
-            return Cow::Owned(format!("{MASK} len={}", value.len()));
+            return Cow::Owned(mask_value(value, shaped, true));
         }
         self.text(value)
     }
@@ -150,6 +160,15 @@ impl Redactor {
     /// sensitive values replaced. Keys and order are kept; the result is
     /// re-encoded.
     pub fn query<'a>(&self, query: &'a str) -> Cow<'a, str> {
+        self.query_as(query, false)
+    }
+
+    /// Like [`Redactor::query`], but masked values keep their [`shape`].
+    pub fn query_shaped<'a>(&self, query: &'a str) -> Cow<'a, str> {
+        self.query_as(query, true)
+    }
+
+    fn query_as<'a>(&self, query: &'a str, shaped: bool) -> Cow<'a, str> {
         if !self.enabled || query.is_empty() {
             return Cow::Borrowed(query);
         }
@@ -157,8 +176,9 @@ impl Redactor {
         let mut ser = form_urlencoded::Serializer::new(String::new());
         for (k, v) in form_urlencoded::parse(query.as_bytes()) {
             if self.sensitive_field(&k) {
-                changed = true;
-                ser.append_pair(&k, MASK);
+                let m = mask_value(&v, shaped, false);
+                changed |= *m != *v;
+                ser.append_pair(&k, &m);
             } else {
                 let r = self.text(&v);
                 changed |= matches!(r, Cow::Owned(_));
@@ -171,16 +191,30 @@ impl Redactor {
     /// A request or response body, using the content type to pick the
     /// strategy: form fields, JSON keys, then the generic patterns.
     pub fn body<'a>(&self, content_type: Option<&str>, body: &'a str) -> Cow<'a, str> {
+        self.body_as(content_type, body, false)
+    }
+
+    /// Like [`Redactor::body`], but masked values keep their [`shape`].
+    pub fn body_shaped<'a>(&self, content_type: Option<&str>, body: &'a str) -> Cow<'a, str> {
+        self.body_as(content_type, body, true)
+    }
+
+    fn body_as<'a>(&self, content_type: Option<&str>, body: &'a str, shaped: bool) -> Cow<'a, str> {
         if !self.enabled {
             return Cow::Borrowed(body);
         }
         let ct = content_type.unwrap_or("").to_ascii_lowercase();
         if ct.starts_with("application/x-www-form-urlencoded") {
-            return Cow::Owned(self.query(body).into_owned());
+            return Cow::Owned(self.query_as(body, shaped).into_owned());
         }
         let after_fields: Cow<'a, str> = match &self.json_fields {
             Some(re) if ct.contains("json") || body.trim_start().starts_with('{') => {
-                match re.replace_all(body, format!("${{1}}\"{MASK}\"")) {
+                let rep = |c: &regex::Captures| {
+                    let raw = c[2].strip_prefix('"').and_then(|v| v.strip_suffix('"')).unwrap_or(&c[2]);
+                    let m = mask_value(raw, shaped, false);
+                    format!("{}{}", &c[1], serde_json::Value::String(m))
+                };
+                match re.replace_all(body, rep) {
                     Cow::Borrowed(_) => Cow::Borrowed(body),
                     Cow::Owned(s) => Cow::Owned(s),
                 }
@@ -242,6 +276,95 @@ impl Redactor {
         }
         out
     }
+}
+
+/// Words kept by [`shape`]: the vocabulary of SQL injection, XSS, command
+/// and path attacks. Everything else in a word becomes `a`.
+const SHAPE_KEYWORDS: &[&str] = &[
+    "select", "union", "all", "insert", "update", "delete", "drop", "from", "where", "or", "and",
+    "not", "null", "like", "having", "order", "group", "by", "limit", "into", "values", "exec",
+    "execute", "sleep", "benchmark", "waitfor", "delay", "case", "when", "then", "else", "end",
+    "concat", "char", "chr", "ascii", "substring", "information", "schema", "table", "tables",
+    "load", "file", "outfile", "xp", "cmdshell", "script", "javascript", "alert", "prompt", "eval",
+    "onerror", "onload", "img", "svg", "iframe", "src", "document", "cookie", "etc", "passwd",
+    "bin", "sh", "bash", "cmd", "curl", "wget", "true", "false",
+];
+
+/// Longest shape kept, in bytes.
+const SHAPE_MAX: usize = 160;
+
+/// A masked value's structure without its content: every run of letters
+/// becomes `a` (unless it is an attack keyword, kept in upper case), every
+/// run of digits `9`, and punctuation and spaces are kept. A session token
+/// `f3Kx9_q2` becomes `a9a9_a9`; an injection `1' or 1=1--` becomes
+/// `9' OR 9=9--`. Secret entropy is gone, attack syntax stays.
+pub fn shape(value: &str) -> String {
+    let mut out = String::new();
+    let mut chars = value.chars().peekable();
+    while let Some(&c) = chars.peek() {
+        if out.len() >= SHAPE_MAX {
+            out.push('…');
+            break;
+        }
+        if c.is_alphabetic() {
+            let mut word = String::new();
+            while let Some(&c) = chars.peek().filter(|c| c.is_alphabetic()) {
+                word.push(c);
+                chars.next();
+            }
+            let lower = word.to_lowercase();
+            if SHAPE_KEYWORDS.contains(&lower.as_str()) {
+                out.push_str(&lower.to_uppercase());
+            } else {
+                out.push('a');
+            }
+        } else if c.is_numeric() {
+            while chars.peek().is_some_and(|c| c.is_numeric()) {
+                chars.next();
+            }
+            out.push('9');
+        } else {
+            chars.next();
+            out.push(if c.is_control() { ' ' } else { c });
+        }
+    }
+    out
+}
+
+/// The masked form of a sensitive value. A value that is already masked (a
+/// stored event redacted again on its way to the AI or a dataset) keeps its
+/// mask, with any shape normalized again so that a crafted look-alike cannot
+/// smuggle text through.
+fn mask_value(value: &str, shaped: bool, with_len: bool) -> String {
+    if let Some(rest) = value.strip_prefix(MASK) {
+        if rest.is_empty() {
+            return MASK.to_string();
+        }
+        if let Some(rest) = rest.strip_prefix(" len=") {
+            let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            let tail = &rest[digits.len()..];
+            if !digits.is_empty() && digits.len() < 10 {
+                if tail.is_empty() {
+                    return format!("{MASK} len={digits}");
+                }
+                if let Some(sh) = tail.strip_prefix(" shape=") {
+                    return format!("{MASK} len={digits} shape={}", shape(sh));
+                }
+            }
+        }
+    }
+    if shaped {
+        format!("{MASK} len={} shape={}", value.len(), shape(value))
+    } else if with_len {
+        format!("{MASK} len={}", value.len())
+    } else {
+        MASK.to_string()
+    }
+}
+
+/// True when `s` holds a masked value with or without a shape.
+pub fn contains_mask(s: &str) -> bool {
+    s.contains(MASK) || s.contains("%5BREDACTED%5D")
 }
 
 fn luhn(digits: &str) -> bool {
@@ -325,5 +448,44 @@ mod tests {
         let d = Redactor::disabled();
         assert_eq!(d.header("authorization", "x"), "x");
         assert_eq!(d.query("password=x"), "password=x");
+    }
+
+    #[test]
+    fn shape_keeps_attack_syntax_and_drops_content() {
+        assert_eq!(shape("1' or 1=1--"), "9' OR 9=9--");
+        assert_eq!(shape("f3Kx9_q2"), "a9a9_a9");
+        assert_eq!(shape("x' UNION SELECT pass FROM users"), "a' UNION SELECT a FROM a");
+        assert!(shape(&"ab1".repeat(200)).ends_with('…'));
+    }
+
+    #[test]
+    fn shaped_query_keeps_shape_and_plain_query_does_not() {
+        let q = "session_id=abc123%27+or+1%3D1--&q=shoes";
+        assert_eq!(r().query(q), "session_id=%5BREDACTED%5D&q=shoes");
+        let shaped = r().query_shaped(q).into_owned();
+        let pairs: Vec<(String, String)> =
+            form_urlencoded::parse(shaped.as_bytes()).into_owned().collect();
+        assert_eq!(pairs[0].1, "[REDACTED] len=16 shape=a9' OR 9=9--");
+        assert_eq!(pairs[1].1, "shoes");
+    }
+
+    #[test]
+    fn redacting_again_keeps_the_shape_but_normalizes_it() {
+        let once = r().query_shaped("token=a1'+or+1=1").into_owned();
+        // A second, plain pass (AI input, dataset export) keeps the shape.
+        assert_eq!(r().query(&once), once);
+        // A crafted look-alike cannot carry text through.
+        let crafted = "token=%5BREDACTED%5D+len%3D3+shape%3Dsecret+text";
+        let pairs: Vec<(String, String)> =
+            form_urlencoded::parse(r().query(crafted).as_bytes()).into_owned().collect();
+        assert_eq!(pairs[0].1, "[REDACTED] len=3 shape=a a");
+    }
+
+    #[test]
+    fn shaped_json_and_header() {
+        let b = r().body_shaped(Some("application/json"), r#"{"password":"x' or 1=1","n":1}"#);
+        assert_eq!(b, r#"{"password":"[REDACTED] len=9 shape=a' OR 9=9","n":1}"#);
+        assert_eq!(r().header_shaped("cookie", "sid=1;x"), "[REDACTED] len=7 shape=a=9;a");
+        assert_eq!(r().header("cookie", &r().header("cookie", "a=b")), "[REDACTED] len=3");
     }
 }

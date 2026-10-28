@@ -20,7 +20,7 @@
     const t = (el.textContent || '').trim().replace(/\s+/g, ' ').slice(0, 30);
     return parts.join(' > ') + (t ? ' "' + t + '"' : '');
   };
-  const all = [...document.querySelectorAll('#app *, #login *, dialog[open] *')].filter(vis);
+  const all = [...document.querySelectorAll('#app *, #login *, #drawer *, dialog[open] *')].filter(vis);
   const out = { view: location.hash, theme: document.documentElement.dataset.theme || 'system', width: innerWidth };
 
   // 1. Struck-through text reads as broken or disabled.
@@ -83,7 +83,8 @@
   // 6. Containers of one kind must share radius and padding.
   out.containerStyles = {};
   for (const sel of ['.card', '.kpi', '.status-strip', '.callout', '.verdict', '.chip-toggle', '.badge', '.btn:not(.btn-sm):not(.btn-icon):not(.btn-link)', '.btn-sm', 'input[type=text]', 'select']) {
-    const vals = new Set(all.filter((el) => el.matches(sel)).map((el) => {
+    // Controls inside table rows are compact cell editors with their own size.
+    const vals = new Set(all.filter((el) => el.matches(sel) && !el.closest('td, .vrow')).map((el) => {
       const cs = getComputedStyle(el);
       // Height is compared only for controls; containers grow with content.
       const hgt = el.matches('.card, .callout, .verdict, .status-strip') ? '' : ` h=${Math.round(el.getBoundingClientRect().height)}`;

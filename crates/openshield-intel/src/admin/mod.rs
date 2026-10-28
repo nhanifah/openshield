@@ -427,6 +427,7 @@ async fn event_detail(State(app): S, _c: Caller, Path(id): Path<String>) -> ApiR
     v["user_agent"] = json!(ev.user_agent);
     v["headers"] = json!(ev.headers);
     v["body_excerpt"] = json!(ev.body_excerpt);
+    v["evidence_redacted"] = json!(ev.evidence_redacted());
     v["scores"] = json!(ev.scores);
     v["matched_rules"] = json!(ev.matched_rules);
     v["anomaly"] = json!(ev.anomaly);

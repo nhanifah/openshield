@@ -485,7 +485,13 @@ impl Transaction {
             protocol: protocol.clone(),
             host: host.clone(),
             path: path.clone(),
-            query: waf_redactor_query(&self.waf, &query),
+            // A request that matched a rule keeps the shape of masked values,
+            // so the evidence for the match stays readable.
+            query: if self.matched_rules.is_empty() {
+                self.waf.redactor().query(&query).into_owned()
+            } else {
+                self.waf.redactor().query_shaped(&query).into_owned()
+            },
             status: outcome.status,
             duration_ms: elapsed.as_secs_f64() * 1000.0,
             bytes_received: self.req.buffer.total_size,
@@ -504,19 +510,19 @@ impl Transaction {
         let headers = self
             .request
             .as_ref()
-            .map(|r| audit_headers(redactor, &r.headers))
+            .map(|r| audit_headers(redactor, &r.headers, true))
             .unwrap_or_default();
         let req_ct = self
             .request
             .as_ref()
             .and_then(|r| populate::get_header(&r.headers, "content-type"));
-        let body = lossy_body(&self.req.buffer.buf).map(|b| redactor.body(req_ct, &b).into_owned());
+        let body = lossy_body(&self.req.buffer.buf).map(|b| redactor.body_shaped(req_ct, &b).into_owned());
 
         let response = outcome.headers.map(|headers| {
             let res_ct = populate::get_header(headers, "content-type");
             AuditResponse {
                 status: outcome.status,
-                headers: audit_headers(redactor, headers),
+                headers: audit_headers(redactor, headers, false),
                 body: lossy_body(&self.res.buffer.buf)
                     .map(|b| redactor.body(res_ct, &b).into_owned()),
                 body_size: self.res.buffer.total_size,
@@ -539,7 +545,7 @@ impl Transaction {
                 protocol,
                 host,
                 path,
-                query: redactor.query(&query).into_owned(),
+                query: redactor.query_shaped(&query).into_owned(),
                 headers,
                 body,
                 body_size: self.req.buffer.total_size,
@@ -654,19 +660,16 @@ impl Transaction {
     }
 }
 
-fn waf_redactor_query(waf: &Waf, query: &str) -> String {
-    waf.redactor().query(query).into_owned()
-}
-
 /// Headers for the audit log: values redacted, repeated headers joined with
 /// `, ` so none are lost.
 fn audit_headers(
     redactor: &crate::redact::Redactor,
     headers: &[(String, String)],
+    shaped: bool,
 ) -> HashMap<String, String> {
     let mut out: HashMap<String, String> = HashMap::with_capacity(headers.len());
     for (k, v) in headers {
-        let v = redactor.header(k, v);
+        let v = if shaped { redactor.header_shaped(k, v) } else { redactor.header(k, v) };
         out.entry(k.to_ascii_lowercase())
             .and_modify(|e| {
                 e.push_str(", ");
@@ -1146,7 +1149,8 @@ challenge:
             headers: Some(&[("set-cookie".into(), "sid=1".into())]),
             error: None,
         });
-        assert_eq!(record.access.query, "q=1&access_token=%5BREDACTED%5D");
+        // The request matched a rule, so masked values keep their shape.
+        assert_eq!(record.access.query, "q=1&access_token=%5BREDACTED%5D+len%3D3+shape%3Da");
         let audit = record.audit.unwrap();
         let text = serde_json::to_string(&audit).unwrap();
         for secret in ["s3cr3t-value", "session=abc", "hunter2", "zzz", "sid=1"] {
