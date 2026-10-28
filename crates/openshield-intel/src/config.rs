@@ -152,14 +152,17 @@ impl Default for AnomalyConfig {
 }
 
 /// Automatic temporary blocks from deterministic evidence only (rule
-/// blocks), never from AI output. Off by default: it is a high-impact
-/// action.
+/// blocks and the anomaly score), never from AI output. Off by default: it
+/// is a high-impact action. Either trigger blocks; allowed IPs never are.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AutoBlockConfig {
     pub enabled: bool,
-    /// Rule blocks within one anomaly window that trigger a temporary block.
+    /// Rule blocks within one anomaly window that trigger a temporary block
+    /// (0: off).
     pub blocks_in_window: u32,
+    /// Client anomaly score that triggers a temporary block (0: off).
+    pub min_score: f64,
     pub ttl_s: u64,
 }
 
@@ -168,6 +171,7 @@ impl Default for AutoBlockConfig {
         Self {
             enabled: false,
             blocks_in_window: 50,
+            min_score: 0.0,
             ttl_s: 600,
         }
     }
@@ -352,6 +356,16 @@ impl IntelConfig {
             if !(0.0..=1.0).contains(&v) {
                 return Err(format!("{name} must be between 0 and 1"));
             }
+        }
+        let ab = &self.anomaly.auto_block;
+        if !(0.0..=1.0).contains(&ab.min_score) {
+            return Err("intel.anomaly.auto_block.min_score must be between 0 and 1".into());
+        }
+        if ab.enabled && ab.blocks_in_window == 0 && ab.min_score == 0.0 {
+            return Err("intel.anomaly.auto_block needs blocks_in_window or min_score when enabled".into());
+        }
+        if ab.enabled && ab.ttl_s == 0 {
+            return Err("intel.anomaly.auto_block.ttl_s must be positive".into());
         }
         if self.events.queue_capacity == 0 || self.events.recent_capacity == 0 {
             return Err("intel.events capacities must be positive".into());

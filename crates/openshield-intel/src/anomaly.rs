@@ -231,16 +231,36 @@ impl Detector {
         }
         c.alerted |= fired;
 
-        if cfg.auto_block.enabled && c.blocked >= cfg.auto_block.blocks_in_window && c.alerted & SIG_AUTOBLOCK == 0 {
-            c.alerted |= SIG_AUTOBLOCK;
-            obs.auto_block = Some(AutoBlock {
-                ip: ev.client_ip.clone(),
-                ttl_s: cfg.auto_block.ttl_s,
-                reason: format!(
+        let ab = &cfg.auto_block;
+        if ab.enabled && c.alerted & SIG_AUTOBLOCK == 0 {
+            let by_count = ab.blocks_in_window > 0 && c.blocked >= ab.blocks_in_window;
+            // The epsilon keeps a single 0.6 signal at a 0.6 threshold.
+            let by_score = ab.min_score > 0.0 && score + 1e-9 >= ab.min_score;
+            let reason = if by_count {
+                Some(format!(
                     "auto-block: {} rule blocks in {}s (threshold {})",
-                    c.blocked, cfg.window_s, cfg.auto_block.blocks_in_window
-                ),
-            });
+                    c.blocked, cfg.window_s, ab.blocks_in_window
+                ))
+            } else if by_score {
+                let kinds: Vec<&str> = reasons.iter().map(|r| r.kind.as_str()).collect();
+                Some(format!(
+                    "auto-block: anomaly score {:.2} ({}) in {}s (threshold {})",
+                    score,
+                    kinds.join(", "),
+                    cfg.window_s,
+                    ab.min_score
+                ))
+            } else {
+                None
+            };
+            if let Some(reason) = reason {
+                c.alerted |= SIG_AUTOBLOCK;
+                obs.auto_block = Some(AutoBlock {
+                    ip: ev.client_ip.clone(),
+                    ttl_s: ab.ttl_s,
+                    reason,
+                });
+            }
         }
 
         obs.anomaly = Anomaly { score, reasons };
@@ -380,6 +400,7 @@ mod tests {
             enabled: true,
             blocks_in_window: 4,
             ttl_s: 60,
+            ..Default::default()
         };
         let mut d = Detector::new(c);
         let mut blocks = Vec::new();
@@ -396,6 +417,72 @@ mod tests {
         for i in 0..20 {
             assert!(d.observe(&ev("4.4.4.4", "/x", 403, "pass"), 1_000 + i).auto_block.is_none());
         }
+    }
+
+    fn score_block_cfg(blocks_in_window: u32) -> AnomalyConfig {
+        let mut c = cfg();
+        c.auto_block = AutoBlockConfig {
+            enabled: true,
+            blocks_in_window,
+            min_score: 0.6,
+            ttl_s: 3600,
+        };
+        c
+    }
+
+    #[test]
+    fn auto_block_by_anomaly_score() {
+        // Scanning (0.5) plus error burst (0.3) scores 0.65: blocked once.
+        let mut d = Detector::new(score_block_cfg(0));
+        let mut blocks = Vec::new();
+        for i in 0..8 {
+            if let Some(b) = d.observe(&ev("5.5.5.5", &format!("/p{i}"), 404, "pass"), 1_000 + i).auto_block {
+                blocks.push(b);
+            }
+        }
+        assert_eq!(blocks.len(), 1, "{blocks:?}");
+        assert_eq!(blocks[0].ttl_s, 3600);
+        assert!(blocks[0].reason.contains("anomaly score 0.65"), "{}", blocks[0].reason);
+        assert!(blocks[0].reason.contains("scanning"), "{}", blocks[0].reason);
+
+        // Attack burst alone scores exactly 0.6, which meets the threshold.
+        let mut d = Detector::new(score_block_cfg(0));
+        let mut hit = None;
+        for i in 0..3 {
+            hit = hit.or(d.observe(&ev("6.6.6.6", "/x", 403, "block"), 1_000 + i).auto_block);
+        }
+        assert!(hit.is_some_and(|b| b.reason.contains("anomaly score 0.60")));
+
+        // Scanning alone (0.5, with enough 200s to stay out of an error
+        // burst) stays under it.
+        let mut d = Detector::new(score_block_cfg(0));
+        let mut last = Observation::default();
+        for i in 0..2 {
+            d.observe(&ev("7.7.7.7", "/", 200, "pass"), 1_000 + i);
+        }
+        for i in 0..5 {
+            last = d.observe(&ev("7.7.7.7", &format!("/p{i}"), 404, "pass"), 1_010 + i);
+            assert!(last.auto_block.is_none(), "{last:?}");
+        }
+        assert!(last.anomaly.reasons.iter().any(|r| r.kind == "scanning"), "{last:?}");
+        assert!((last.anomaly.score - 0.5).abs() < 1e-9, "{last:?}");
+    }
+
+    #[test]
+    fn auto_block_count_and_score_are_separate_triggers() {
+        // Count trigger with the score trigger off.
+        let mut c = score_block_cfg(2);
+        c.auto_block.min_score = 0.0;
+        let mut d = Detector::new(c);
+        d.observe(&ev("8.8.8.8", "/x", 403, "block"), 1_000);
+        let b = d.observe(&ev("8.8.8.8", "/x", 403, "block"), 1_001).auto_block.expect("count trigger");
+        assert!(b.reason.contains("2 rule blocks"), "{}", b.reason);
+        // Both on: the count reason wins when both hold, still one block.
+        let mut d = Detector::new(score_block_cfg(3));
+        let n = (0..5)
+            .filter_map(|i| d.observe(&ev("9.9.9.9", "/x", 403, "block"), 1_000 + i).auto_block)
+            .count();
+        assert_eq!(n, 1);
     }
 
     #[test]

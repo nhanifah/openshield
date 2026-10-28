@@ -53,6 +53,7 @@ intel:
     rate_threshold: 30
     scan_404_threshold: 10
     block_burst_threshold: 5
+    auto_block: {enabled: true, blocks_in_window: 0, min_score: 0.6, ttl_s: 30}
   ai:
     enabled: true
     model: "mock-model"

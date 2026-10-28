@@ -198,7 +198,7 @@ intel:
     rate_threshold: 100
     scan_404_threshold: 20
     block_burst_threshold: 10
-    auto_block: {enabled: false, blocks_in_window: 50, ttl_s: 600}
+    auto_block: {enabled: false, blocks_in_window: 50, min_score: 0, ttl_s: 600}
   ai:
     enabled: false
     model: "<gemini model id>" # required; any generateContent model
@@ -221,6 +221,8 @@ admin:
 ```
 
 **Notable events** are those with a rule match, an anomaly score above zero, a 5xx status, or an error. They are always candidates for storage; ordinary traffic is stored at `benign_sample_rate`. Statistics, alerts and the live stream see every request regardless of what is stored.
+
+**Auto-block.** When `anomaly.auto_block.enabled` is true, a client is blocked for `ttl_s` seconds when it reaches `blocks_in_window` rule blocks in one anomaly window, or when its anomaly score reaches `min_score` (set either to 0 to turn that trigger off). Client scores combine `rate_spike` (0.4 to 0.7), `scanning` (0.5), `attack_burst` (0.6) and `error_burst` (0.3), so `min_score: 0.6` blocks an attack burst, a very high request rate, or scanning together with errors, but not scanning or errors alone. Clients behind one shared address (an office NAT or a mobile carrier) share one score, so put such addresses on the allow list: allowed IPs are never auto-blocked. Each block appears under Controls and in the audit log as `system:auto-block`, with the reason. AI verdicts never trigger it. The `intel` section is not part of the policy, so changing it keeps the policy edited in the dashboard; it takes effect after a restart.
 
 **Performance.** Measured in [reports/PERFORMANCE_COMPARISON.md](../reports/PERFORMANCE_COMPARISON.md). `store_all_events: true` with `per_client_per_sec: 0` writes every request to SQLite and costs much more throughput than the defaults.
 

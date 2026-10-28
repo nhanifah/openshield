@@ -241,6 +241,26 @@ def t_anomaly(ctx):
     return a is not None and e is not None, f"alert={'yes' if a else 'no'} anomalous_event={'yes' if e else 'no'}"
 
 
+@test("I30", "Auto-block by anomaly score: a client at score 0.6 or more is blocked for ttl_s, a lower score is not", "high")
+def t_auto_block_score(ctx):
+    ip = "203.0.113.160"
+    # Against rate_threshold 30, rate_spike weighs 0.4 + 0.3 * (n / 30 - 1),
+    # which reaches 0.6 at the 50th request in the window. No rule blocks.
+    for i in range(55):
+        as_client(ip, "GET", f"/echo/burst{i}")
+    c = wait_for(lambda: next((x for x in api("GET", "/api/controls")[1]["ip_blocks"] if x["value"] == ip), None))
+    st = as_client(ip, "GET", "/echo/after").status
+    # I10's client sent 40 requests (score 0.53) and must not be blocked.
+    low = any(x["value"] == "203.0.113.50" for x in api("GET", "/api/controls")[1]["ip_blocks"])
+    audit = api("GET", "/api/audit?limit=200")[1]
+    audited = any(a.get("actor") == "system:auto-block" and a.get("target") == ip for a in audit["entries"])
+    if c:
+        api("DELETE", f"/api/controls/ip-block/{ip}", "alice")
+    ok = (c is not None and c["actor"] == "system:auto-block" and "anomaly score" in c["reason"]
+          and c["expires_at"] - c["created_at"] == 30_000 and st == 403 and not low and audited)
+    return ok, f"control={c} status_after={st} low_score_blocked={low} audited={audited}"
+
+
 @test("I11", "AI verdict is attached to a blocked event; provider gets no secrets and the key only in a header", "high")
 def t_ai_verdict(ctx):
     mock("/_reset", "")
