@@ -154,7 +154,7 @@ impl Default for AnomalyConfig {
 /// Automatic temporary blocks from deterministic evidence only (rule
 /// blocks and the anomaly score), never from AI output. Off by default: it
 /// is a high-impact action. Either trigger blocks; allowed IPs never are.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Deserialize, serde::Serialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct AutoBlockConfig {
     pub enabled: bool,
@@ -164,6 +164,27 @@ pub struct AutoBlockConfig {
     /// Client anomaly score that triggers a temporary block (0: off).
     pub min_score: f64,
     pub ttl_s: u64,
+}
+
+impl AutoBlockConfig {
+    pub const MAX_TTL_S: u64 = 30 * 86_400;
+    pub const MAX_BLOCKS: u32 = 100_000;
+
+    pub fn validate(&self) -> Result<(), String> {
+        if !self.min_score.is_finite() || !(0.0..=1.0).contains(&self.min_score) {
+            return Err("min_score must be between 0 and 1".into());
+        }
+        if self.blocks_in_window > Self::MAX_BLOCKS {
+            return Err(format!("blocks_in_window must be at most {}", Self::MAX_BLOCKS));
+        }
+        if !(1..=Self::MAX_TTL_S).contains(&self.ttl_s) {
+            return Err("ttl_s must be between 1 second and 30 days".into());
+        }
+        if self.enabled && self.blocks_in_window == 0 && self.min_score == 0.0 {
+            return Err("set blocks_in_window or min_score when auto-block is enabled".into());
+        }
+        Ok(())
+    }
 }
 
 impl Default for AutoBlockConfig {
@@ -357,16 +378,10 @@ impl IntelConfig {
                 return Err(format!("{name} must be between 0 and 1"));
             }
         }
-        let ab = &self.anomaly.auto_block;
-        if !(0.0..=1.0).contains(&ab.min_score) {
-            return Err("intel.anomaly.auto_block.min_score must be between 0 and 1".into());
-        }
-        if ab.enabled && ab.blocks_in_window == 0 && ab.min_score == 0.0 {
-            return Err("intel.anomaly.auto_block needs blocks_in_window or min_score when enabled".into());
-        }
-        if ab.enabled && ab.ttl_s == 0 {
-            return Err("intel.anomaly.auto_block.ttl_s must be positive".into());
-        }
+        self.anomaly
+            .auto_block
+            .validate()
+            .map_err(|e| format!("intel.anomaly.auto_block: {e}"))?;
         if self.events.queue_capacity == 0 || self.events.recent_capacity == 0 {
             return Err("intel.events capacities must be positive".into());
         }

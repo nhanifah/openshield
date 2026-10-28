@@ -26,6 +26,10 @@
   // 1. Struck-through text reads as broken or disabled.
   out.strike = all.filter((el) => getComputedStyle(el).textDecorationLine.includes('line-through')).map(name);
 
+  // 1b. Buttons must look like buttons: a link styled as one (a.btn) keeps
+  // no underline.
+  out.underlinedButtons = all.filter((el) => el.matches('.btn:not(.btn-link)') && getComputedStyle(el).textDecorationLine.includes('underline')).map(name);
+
   // 2. Pills inside pills (double borders).
   const PILL = '.badge, .chip, .chip-toggle, .pill';
   out.nestedPills = all.filter((el) => el.matches(PILL) && el.parentElement && el.parentElement.closest(PILL)).map(name);
@@ -192,7 +196,52 @@
     out.narrowContainers = out.narrowContainers.slice(0, 10);
   }
 
-  out.total = out.narrowContainers.length + out.offscreenFocusable.length + out.clippedHeaders.length + out.strike.length + out.nestedPills.length + out.rowHeights.length + out.overflow.length + out.clippedControls.length + (out.pageScrollsSideways ? 1 : 0)
+  // 12. Contrast in the hover state, which the checks above never see. For
+  // each button, take the most specific :hover rule that matches it (later
+  // rules win ties), resolve its colors in the button's context, and check.
+  const spec = (sel) => {
+    const s = sel.replace(/::?[a-z-]+\(/g, (m) => (m === ':not(' || m === ':is(' ? '(' : m));
+    const ids = (s.match(/#[\w-]+/g) || []).length;
+    const cls = (s.match(/\.[\w-]+|\[[^\]]+\]|:(?!:)[\w-]+/g) || []).length;
+    const tags = (s.replace(/\[[^\]]+\]|[.#:][\w-]+/g, ' ').match(/[a-z][\w-]*/gi) || []).length;
+    return ids * 10000 + cls * 100 + tags;
+  };
+  const hoverRules = [];
+  let order = 0;
+  const walk = (rules) => {
+    for (const r of rules) {
+      if (r.cssRules && !r.selectorText) { if (!r.media || matchMedia(r.media.mediaText).matches) walk(r.cssRules); continue; }
+      if (!r.selectorText || !r.selectorText.includes(':hover')) continue;
+      for (const part of r.selectorText.split(',')) if (part.includes(':hover')) hoverRules.push({ sel: part.trim(), base: part.trim().replace(/:hover/g, ''), style: r.style, spec: spec(part), order: order++ });
+    }
+  };
+  for (const sh of document.styleSheets) { try { walk(sh.cssRules); } catch (e) { /* cross-origin */ } }
+  out.hoverContrast = [];
+  for (const el of all.filter((e) => e.matches('button, a.btn') && !e.closest(':disabled, [aria-disabled=true]'))) {
+    let best = null;
+    for (const r of hoverRules) {
+      let ok = false;
+      try { ok = el.matches(r.base); } catch (e) { ok = false; }
+      if (ok && (!best || r.spec > best.spec || r.spec === best.spec && r.order > best.order)) best = r;
+    }
+    if (!best || !(best.style.background || best.style.backgroundColor || best.style.color)) continue;
+    const probe = document.createElement('span');
+    const cs = getComputedStyle(el);
+    probe.style.color = best.style.color || cs.color;
+    probe.style.background = best.style.background || best.style.backgroundColor || cs.backgroundColor;
+    el.appendChild(probe);
+    const pcs = getComputedStyle(probe);
+    const fg = parse(pcs.color), b = parse(pcs.backgroundColor);
+    probe.remove();
+    const under = bgOf(el.parentElement || el);
+    const ba = b.length > 3 ? b[3] : 1;
+    const bg = [b[0] * ba + under[0] * (1 - ba), b[1] * ba + under[1] * (1 - ba), b[2] * ba + under[2] * (1 - ba)];
+    const ratio = (Math.max(lum(fg), lum(bg)) + 0.05) / (Math.min(lum(fg), lum(bg)) + 0.05);
+    if (ratio < 4.5) out.hoverContrast.push(ratio.toFixed(2) + ' on hover (' + best.sel + ') ' + name(el));
+  }
+  out.hoverContrast = out.hoverContrast.slice(0, 10);
+
+  out.total = out.underlinedButtons.length + out.hoverContrast.length + out.narrowContainers.length + out.offscreenFocusable.length + out.clippedHeaders.length + out.strike.length + out.nestedPills.length + out.rowHeights.length + out.overflow.length + out.clippedControls.length + (out.pageScrollsSideways ? 1 : 0)
     + out.clippedText.length + Object.keys(out.containerStyles).length + out.uneven.length + out.lowContrastCount + out.smallTargets.length;
   return out;
 })();

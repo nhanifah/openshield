@@ -261,6 +261,36 @@ def t_auto_block_score(ctx):
     return ok, f"control={c} status_after={st} low_score_blocked={low} audited={audited}"
 
 
+@test("I31", "Auto-block settings from the dashboard: admin-only, validated, applied without a restart, audited and reset to the file", "high")
+def t_auto_block_settings(ctx):
+    ip = "203.0.113.170"
+    good = {"enabled": True, "blocks_in_window": 3, "min_score": 0, "ttl_s": 120}
+    analyst, _, _ = api("PUT", "/api/settings/auto-block", "ana", good)
+    bad_score, _, _ = api("PUT", "/api/settings/auto-block", "alice", dict(good, min_score=1.5))
+    no_trigger, _, _ = api("PUT", "/api/settings/auto-block", "alice", dict(good, blocks_in_window=0))
+    unknown, _, _ = api("PUT", "/api/settings/auto-block", "alice", dict(good, by_ai=True))
+    saved, _, _ = api("PUT", "/api/settings/auto-block", "alice", good)
+    view = api("GET", "/api/settings")[1]["auto_block"]
+    # Three rule blocks in one window now block the client, with no restart.
+    for _ in range(3):
+        as_client(ip, "GET", "/admin")
+    c = wait_for(lambda: next((x for x in api("GET", "/api/controls")[1]["ip_blocks"] if x["value"] == ip), None))
+    after = as_client(ip, "GET", "/echo/ok").status
+    audit = api("GET", "/api/audit?limit=200")[1]["entries"]
+    audited = any(a["action"] == "settings_auto_block" and a["actor"] == "alice" for a in audit)
+    reset, _, _ = api("DELETE", "/api/settings/auto-block", "alice")
+    back = api("GET", "/api/settings")[1]["auto_block"]
+    if c:
+        api("DELETE", f"/api/controls/ip-block/{ip}", "alice")
+    ok = ((analyst, bad_score, no_trigger, unknown, saved, reset) == (403, 400, 400, 422, 200, 200)
+          and view["source"] == "dashboard" and view["values"] == good | {"min_score": 0.0}
+          and c is not None and "3 rule blocks" in c["reason"] and c["expires_at"] - c["created_at"] == 120_000
+          and after == 403 and audited
+          and back["source"] == "config_file" and back["values"]["min_score"] == 0.6 and back["values"]["blocks_in_window"] == 0)
+    return ok, (f"analyst={analyst} bad_score={bad_score} no_trigger={no_trigger} unknown={unknown} saved={saved} "
+                f"source={view['source']} control={c and c['reason']} after={after} audited={audited} reset={reset} back={back['source']}/{back['values']}")
+
+
 @test("I11", "AI verdict is attached to a blocked event; provider gets no secrets and the key only in a header", "high")
 def t_ai_verdict(ctx):
     mock("/_reset", "")

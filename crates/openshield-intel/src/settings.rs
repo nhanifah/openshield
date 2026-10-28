@@ -12,12 +12,13 @@ use arc_swap::ArcSwap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::config::{AiConfig, AiTrigger, IntelConfig, StoreConfig};
+use crate::config::{AiConfig, AiTrigger, AutoBlockConfig, IntelConfig, StoreConfig};
 use crate::store::Store;
 
 pub const AI_KEY: &str = "ai";
 pub const AI_API_KEY: &str = "ai.api_key";
 pub const STORAGE_KEY: &str = "storage";
+pub const AUTO_BLOCK_KEY: &str = "auto_block";
 
 /// The AI settings editable from the dashboard.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -150,6 +151,7 @@ pub struct Settings {
     base: IntelConfig,
     pub ai: ArcSwap<AiConfig>,
     pub storage: ArcSwap<StorageSettings>,
+    pub auto_block: ArcSwap<AutoBlockConfig>,
 }
 
 impl Settings {
@@ -158,6 +160,7 @@ impl Settings {
         let s = Self {
             ai: ArcSwap::from_pointee(base.ai.clone()),
             storage: ArcSwap::from_pointee(StorageSettings::from_config(&base.store)),
+            auto_block: ArcSwap::from_pointee(base.anomaly.auto_block.clone()),
             store,
             base,
         };
@@ -175,6 +178,12 @@ impl Settings {
             match serde_json::from_str::<StorageSettings>(&json) {
                 Ok(st) => s.storage.store(Arc::new(st)),
                 Err(e) => log::error!("ignoring stored storage settings: {e}"),
+            }
+        }
+        if let Some((json, _)) = s.store.setting(AUTO_BLOCK_KEY)? {
+            match serde_json::from_str::<AutoBlockConfig>(&json).map_err(|e| e.to_string()).and_then(|a| a.validate().map(|_| a)) {
+                Ok(a) => s.auto_block.store(Arc::new(a)),
+                Err(e) => log::error!("ignoring stored auto-block settings: {e}"),
             }
         }
         Ok(s)
@@ -251,6 +260,22 @@ impl Settings {
         Ok(())
     }
 
+    // ---- auto-block -------------------------------------------------------------
+
+    pub fn save_auto_block(&self, a: &AutoBlockConfig, by: &str) -> Result<(), String> {
+        a.validate()?;
+        self.store
+            .put_setting(AUTO_BLOCK_KEY, &serde_json::to_string(a).map_err(|e| e.to_string())?, false, by)?;
+        self.auto_block.store(Arc::new(a.clone()));
+        Ok(())
+    }
+
+    pub fn reset_auto_block(&self) -> Result<(), String> {
+        self.store.delete_setting(AUTO_BLOCK_KEY)?;
+        self.auto_block.store(Arc::new(self.base.anomaly.auto_block.clone()));
+        Ok(())
+    }
+
     /// Everything the settings page shows. Secrets appear only as
     /// "set / not set" with who changed them and when.
     pub fn describe(&self) -> Value {
@@ -259,6 +284,7 @@ impl Settings {
         let key = self.ai_key();
         let ai_meta = self.store.setting(AI_KEY).ok().flatten().map(|(_, m)| m);
         let st_meta = self.store.setting(STORAGE_KEY).ok().flatten().map(|(_, m)| m);
+        let ab_meta = self.store.setting(AUTO_BLOCK_KEY).ok().flatten().map(|(_, m)| m);
         json!({
             "ai": {
                 "values": ai,
@@ -276,6 +302,13 @@ impl Settings {
                 "values": *self.storage.load_full(),
                 "source": self.source(STORAGE_KEY),
                 "updated": st_meta,
+            },
+            "auto_block": {
+                "values": *self.auto_block.load_full(),
+                "source": self.source(AUTO_BLOCK_KEY),
+                "updated": ab_meta,
+                "window_s": self.base.anomaly.window_s,
+                "anomaly_enabled": self.base.anomaly.enabled,
             },
         })
     }
@@ -348,6 +381,29 @@ mod tests {
         let mut st = StorageSettings::from_config(&StoreConfig::default());
         st.benign_sample_rate = 2.0;
         assert!(s.save_storage(&st, "x").is_err());
+    }
+
+    #[test]
+    fn auto_block_settings_apply_at_once_and_reset() {
+        let s = settings();
+        assert!(!s.auto_block.load().enabled);
+        let a = AutoBlockConfig { enabled: true, blocks_in_window: 10, min_score: 0.6, ttl_s: 3600 };
+        s.save_auto_block(&a, "alice").unwrap();
+        assert_eq!(**s.auto_block.load(), a);
+        assert_eq!(s.describe()["auto_block"]["source"], "dashboard");
+        let reloaded = Settings::load(Arc::clone(&s.store), IntelConfig::default()).unwrap();
+        assert_eq!(**reloaded.auto_block.load(), a, "survives a restart");
+        reloaded.reset_auto_block().unwrap();
+        assert!(!reloaded.auto_block.load().enabled, "reset returns to the config file");
+        for bad in [
+            AutoBlockConfig { min_score: 1.5, ..a.clone() },
+            AutoBlockConfig { min_score: f64::NAN, ..a.clone() },
+            AutoBlockConfig { ttl_s: 0, ..a.clone() },
+            AutoBlockConfig { blocks_in_window: 0, min_score: 0.0, ..a.clone() },
+        ] {
+            assert!(s.save_auto_block(&bad, "x").is_err(), "{bad:?}");
+        }
+        assert_eq!(**s.auto_block.load(), a, "a rejected save changes nothing");
     }
 
     #[test]

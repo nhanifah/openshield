@@ -222,6 +222,8 @@ Values saved here replace the config file's values for that section until reset,
 | POST | `/api/settings/ai/test` | One small call with the saved settings: `{"ok", "latency_ms", "model_version"}` or `{"ok": false, "error"}` |
 | PUT | `/api/settings/storage` | `{"store_all_events", "benign_sample_rate", "per_client_per_sec", "retention_days", "max_events", "body_excerpt_bytes"}` |
 | DELETE | `/api/settings/storage` | Back to the config file's values |
+| PUT | `/api/settings/auto-block` | `{"enabled", "blocks_in_window", "min_score", "ttl_s"}`: rule blocks per anomaly window (0: off), client anomaly score 0 to 1 (0: off), block length 1 s to 30 days. Applies at once. |
+| DELETE | `/api/settings/auto-block` | Back to the config file's values |
 | PUT | `/api/settings/challenge` | `{"enabled", "site_key", "secret_key"?, "challenge_path", "cookie_ttl", "rotate_cookie_secret"}`. Saved as a new policy version (or a pending change in second-approver mode). A cookie signing key is generated when none exists. |
 
 ### Users (admin)

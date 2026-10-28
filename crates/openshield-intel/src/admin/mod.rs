@@ -208,6 +208,7 @@ pub fn router(app: Arc<App>) -> Router {
         .route("/api/settings/ai", axum::routing::put(settings_api::put_ai).delete(settings_api::reset_ai))
         .route("/api/settings/ai/test", post(settings_api::test_ai))
         .route("/api/settings/storage", axum::routing::put(settings_api::put_storage).delete(settings_api::reset_storage))
+        .route("/api/settings/auto-block", axum::routing::put(settings_api::put_auto_block).delete(settings_api::reset_auto_block))
         .route("/api/settings/challenge", axum::routing::put(settings_api::put_challenge))
         .route("/api/users", get(settings_api::list_users).post(settings_api::create_user))
         .route("/api/users/{name}", axum::routing::put(settings_api::set_role).delete(settings_api::delete_user))

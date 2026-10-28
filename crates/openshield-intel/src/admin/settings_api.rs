@@ -15,7 +15,7 @@ use serde_json::{Value, json};
 use super::auth::{SETUP_USER, UserSource, new_token, parse_role, token_digest_hex};
 use super::{ApiError, ApiResult, App, Caller, audit, ok};
 use crate::ai::gemini::GeminiClient;
-use crate::config::Role;
+use crate::config::{AutoBlockConfig, Role};
 use crate::settings::{AiSettings, StorageSettings};
 
 type S = State<Arc<App>>;
@@ -135,6 +135,22 @@ pub async fn reset_storage(State(app): S, c: Caller) -> ApiResult {
     admin(&c)?;
     app.hub.settings.reset_storage().map_err(ApiError::internal)?;
     audit(&app, &c, "settings_storage_reset", "storage", json!({}), "reset to config file");
+    ok(json!({"status": "reset"}))
+}
+
+// ---- auto-block -----------------------------------------------------------------
+
+pub async fn put_auto_block(State(app): S, c: Caller, Json(b): Json<AutoBlockConfig>) -> ApiResult {
+    admin(&c)?;
+    app.hub.settings.save_auto_block(&b, &c.user.name).map_err(ApiError::bad)?;
+    audit(&app, &c, "settings_auto_block", "auto_block", serde_json::to_value(&b).unwrap_or(Value::Null), "applied");
+    ok(json!({"status": "saved"}))
+}
+
+pub async fn reset_auto_block(State(app): S, c: Caller) -> ApiResult {
+    admin(&c)?;
+    app.hub.settings.reset_auto_block().map_err(ApiError::internal)?;
+    audit(&app, &c, "settings_auto_block_reset", "auto_block", json!({}), "reset to config file");
     ok(json!({"status": "reset"}))
 }
 

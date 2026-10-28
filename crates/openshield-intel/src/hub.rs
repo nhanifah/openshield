@@ -355,7 +355,8 @@ impl EventHub {
         let mut ev = build_event(&raw, self.settings.storage.load().body_excerpt_bytes);
         let now = ev.ts;
 
-        let obs = self.detector.lock().observe(&ev, now);
+        let ab = self.settings.auto_block.load();
+        let obs = self.detector.lock().observe_with(&ev, now, &ab);
         ev.anomaly = obs.anomaly;
         for a in &obs.alerts {
             self.raise_alert(a);

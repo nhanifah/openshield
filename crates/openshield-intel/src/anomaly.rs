@@ -21,7 +21,7 @@ use std::hash::{BuildHasher, RandomState};
 
 use serde::Serialize;
 
-use crate::config::AnomalyConfig;
+use crate::config::{AnomalyConfig, AutoBlockConfig};
 use crate::event::{Anomaly, AnomalyReason, SecurityEvent};
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -120,6 +120,13 @@ impl Detector {
 
     /// Score one event and update state. `now_ms` is the event time.
     pub fn observe(&mut self, ev: &SecurityEvent, now_ms: i64) -> Observation {
+        let ab = self.cfg.auto_block.clone();
+        self.observe_with(ev, now_ms, &ab)
+    }
+
+    /// Like `observe`, with the auto-block settings in force now (they can
+    /// change from the dashboard without a restart).
+    pub fn observe_with(&mut self, ev: &SecurityEvent, now_ms: i64, ab: &AutoBlockConfig) -> Observation {
         let mut obs = Observation::default();
         if !self.cfg.enabled {
             return obs;
@@ -231,7 +238,6 @@ impl Detector {
         }
         c.alerted |= fired;
 
-        let ab = &cfg.auto_block;
         if ab.enabled && c.alerted & SIG_AUTOBLOCK == 0 {
             let by_count = ab.blocks_in_window > 0 && c.blocked >= ab.blocks_in_window;
             // The epsilon keeps a single 0.6 signal at a 0.6 threshold.
@@ -328,7 +334,6 @@ impl Detector {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::AutoBlockConfig;
     use crate::event::tests_support::sample_event;
 
     fn cfg() -> AnomalyConfig {

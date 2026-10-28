@@ -1,0 +1,285 @@
+{
+  "tag": "auto-block-dashboard",
+  "time": "2026-10-28T02:57:41Z",
+  "results": [
+    {
+      "id": "I01",
+      "category": "intel",
+      "title": "Admin API rejects missing and wrong tokens",
+      "severity": "high",
+      "passed": true,
+      "detail": "none=401 wrong=401 valid=200",
+      "seconds": 0.01
+    },
+    {
+      "id": "I02",
+      "category": "intel",
+      "title": "Roles gate writes: a viewer cannot block, label or apply policy",
+      "severity": "high",
+      "passed": true,
+      "detail": "viewer block=403 viewer apply=403 analyst apply=403 analyst audit=403",
+      "seconds": 0.0
+    },
+    {
+      "id": "I03",
+      "category": "intel",
+      "title": "Requests become events with secrets redacted",
+      "severity": "high",
+      "passed": true,
+      "detail": "action=block rules=['block-admin'] leaked=[]",
+      "seconds": 0.21
+    },
+    {
+      "id": "I04",
+      "category": "intel",
+      "title": "X-Request-ID is sent upstream and to the client and matches the event",
+      "severity": "medium",
+      "passed": true,
+      "detail": "client=ce96cff0-32d5-4934-bb2a-4a2ec6737c06 upstream=ce96cff0-32d5-4934-bb2a-4a2ec6737c06 event=yes",
+      "seconds": 0.21
+    },
+    {
+      "id": "I05",
+      "category": "intel",
+      "title": "Trusted proxy: the client IP comes from X-Forwarded-For only via the trusted peer",
+      "severity": "medium",
+      "passed": true,
+      "detail": "recorded ip=198.51.100.20",
+      "seconds": 0.2
+    },
+    {
+      "id": "I06",
+      "category": "intel",
+      "title": "Dynamic IP block applies before rules, is audited, and can be removed",
+      "severity": "high",
+      "passed": true,
+      "detail": "before=200 during=403 other=200 after=200 event=yes audit_entries=2",
+      "seconds": 0.41
+    },
+    {
+      "id": "I07",
+      "category": "intel",
+      "title": "Overly broad or malformed block targets are refused",
+      "severity": "medium",
+      "passed": true,
+      "detail": "0.0.0.0/0=400 garbage=400",
+      "seconds": 0.0
+    },
+    {
+      "id": "I08",
+      "category": "intel",
+      "title": "Policy: validate rejects server keys; simulate reports the change; apply takes effect live; rollback restores",
+      "severity": "high",
+      "passed": true,
+      "detail": "validate_bad=False validate_good=True sim_changed=True apply=200/applied live=403 rollback=200 restored=200 versions=3",
+      "seconds": 0.52
+    },
+    {
+      "id": "I09",
+      "category": "intel",
+      "title": "Apply requires a comment and refuses an invalid policy without changing the live one",
+      "severity": "medium",
+      "passed": true,
+      "detail": "no_comment=400 invalid=400 version 3->3",
+      "seconds": 0.0
+    },
+    {
+      "id": "I10",
+      "category": "intel",
+      "title": "Anomaly detection raises a rate_spike alert for a flooding client",
+      "severity": "medium",
+      "passed": true,
+      "detail": "alert=yes anomalous_event=yes",
+      "seconds": 0.22
+    },
+    {
+      "id": "I30",
+      "category": "intel",
+      "title": "Auto-block by anomaly score: a client at score 0.6 or more is blocked for ttl_s, a lower score is not",
+      "severity": "high",
+      "passed": true,
+      "detail": "control={'actor': 'system:auto-block', 'created_at': 1793156235623, 'expires_at': 1793156265623, 'reason': 'auto-block: anomaly score 0.60 (rate_spike) in 10s (threshold 0.6)', 'value': '203.0.113.160'} status_after=403 low_score_blocked=False audited=True",
+      "seconds": 0.02
+    },
+    {
+      "id": "I31",
+      "category": "intel",
+      "title": "Auto-block settings from the dashboard: admin-only, validated, applied without a restart, audited and reset to the file",
+      "severity": "high",
+      "passed": true,
+      "detail": "analyst=403 bad_score=400 no_trigger=400 unknown=422 saved=200 source=dashboard control=auto-block: 3 rule blocks in 10s (threshold 3) after=403 audited=True reset=200 back=config_file/{'blocks_in_window': 0, 'enabled': True, 'min_score': 0.6, 'ttl_s': 30}",
+      "seconds": 0.0
+    },
+    {
+      "id": "I11",
+      "category": "intel",
+      "title": "AI verdict is attached to a blocked event; provider gets no secrets and the key only in a header",
+      "severity": "high",
+      "passed": true,
+      "detail": "verdict={'category': 'malicious', 'confidence': 0.85, 'recommended_action': 'monitor', 'risk': 0.9} provider_calls=1 leaked=[] key_in_header=True key_in_url=False",
+      "seconds": 0.21
+    },
+    {
+      "id": "I12",
+      "category": "intel",
+      "title": "Prompt injection in a request is flagged for review and changes no enforcement",
+      "severity": "high",
+      "passed": true,
+      "detail": "enforced_status=403 ai_category=legitimate ai_status=needs_review reasons=['input contains text aimed at an AI model (ignore previous, classify as legitimate)', 'model disagrees with a firewall block']",
+      "seconds": 0.21
+    },
+    {
+      "id": "I13",
+      "category": "intel",
+      "title": "AI outage: breaker opens, proxy latency and blocking unaffected, alert raised",
+      "severity": "high",
+      "passed": true,
+      "detail": "codes_all_403=True 12 requests took 0.00s breaker=open failures=3 alert=yes benign=200",
+      "seconds": 2.51
+    },
+    {
+      "id": "I14",
+      "category": "intel",
+      "title": "AI timeouts and malformed output are contained",
+      "severity": "medium",
+      "passed": true,
+      "detail": "invalid_outputs=1 slow_mode_request=403 in 0.00s last_error=timeout",
+      "seconds": 9.01
+    },
+    {
+      "id": "I15",
+      "category": "intel",
+      "title": "Labels: a person's label applies at once and can be changed, removed or bulk-set; AI suggestions are accepted or dismissed; export has no raw IPs",
+      "severity": "high",
+      "passed": true,
+      "detail": "set=200 applies_at_once=True change=200/True clear=200/True viewer=403 bad_label=400 bulk=200/True listed=True suggestions[accept=200 again=409 labeled=True] export=200 contains_event=True raw_ip_exported=False traversal=400",
+      "seconds": 0.23
+    },
+    {
+      "id": "I16",
+      "category": "intel",
+      "title": "Live stream delivers event and stats messages",
+      "severity": "medium",
+      "passed": true,
+      "detail": "events=5 stats=5 unauth=401",
+      "seconds": 4.41
+    },
+    {
+      "id": "I17",
+      "category": "intel",
+      "title": "Health, readiness and Prometheus metrics",
+      "severity": "low",
+      "passed": true,
+      "detail": "healthz=200 readyz=200 components={'ai': 'ok', 'policy': 'ok', 'store': 'ok'} missing_metrics=[]",
+      "seconds": 0.0
+    },
+    {
+      "id": "I18",
+      "category": "intel",
+      "title": "Dashboard is served with a strict CSP and no caching",
+      "severity": "medium",
+      "passed": true,
+      "detail": "csp_ok=True cache=no-store xfo=DENY",
+      "seconds": 0.0
+    },
+    {
+      "id": "I19",
+      "category": "intel",
+      "title": "Challenge redirect is limited to the same site (no open redirect)",
+      "severity": "medium",
+      "passed": true,
+      "detail": "{'https://evil.test/phish': (302, '/'), '//evil.test/x': (302, '/'), '/account?x=1': (302, '/account?x=1'), 'http://app.test/cart': (302, '/cart')}",
+      "seconds": 0.01
+    },
+    {
+      "id": "I20",
+      "category": "intel",
+      "title": "Challenge flow: page served, failed token re-challenges, passed token sets a cookie that is honoured",
+      "severity": "medium",
+      "passed": true,
+      "detail": "first=403 bad=403 good=302 with_cookie=200 cookie_other_ip=403",
+      "seconds": 0.0
+    },
+    {
+      "id": "I22",
+      "category": "intel",
+      "title": "Settings are admin-only and never return secret values",
+      "severity": "high",
+      "passed": true,
+      "detail": "analyst=403 admin=200 key_set=True leaked=False",
+      "seconds": 0.0
+    },
+    {
+      "id": "I23",
+      "category": "intel",
+      "title": "AI key saved in the dashboard is used for calls and stored encrypted",
+      "severity": "high",
+      "passed": true,
+      "detail": "save=200 running=True calls=2 with_new_key=1 last_call_new_key=True test_ok=True plaintext_in_db=False",
+      "seconds": 2.52
+    },
+    {
+      "id": "I24",
+      "category": "intel",
+      "title": "Users: create, rotate and revoke tokens; tokens shown once, stored hashed",
+      "severity": "high",
+      "passed": true,
+      "detail": "create=200 works=True dup=409 old_after_rotate=401 new=200 role=200 self_delete=400 analyst_create=403 revoke=200 after_revoke=401 tokens_not_in_db=True",
+      "seconds": 0.01
+    },
+    {
+      "id": "I25",
+      "category": "intel",
+      "title": "Storage settings apply at once: sampling off stores only notable events",
+      "severity": "medium",
+      "passed": true,
+      "detail": "save=200 notable_stored=True ordinary_stored=False invalid=400 reset=200",
+      "seconds": 0.71
+    },
+    {
+      "id": "I26",
+      "category": "intel",
+      "title": "Turnstile settings create a policy version; secrets stay encrypted and masked",
+      "severity": "high",
+      "passed": true,
+      "detail": "save=200/applied policy_masked=True plaintext_in_db=False site_key=site-xyz challenge_served=True",
+      "seconds": 0.01
+    },
+    {
+      "id": "I27",
+      "category": "intel",
+      "title": "Passkeys: register, sign in, replay and wrong origin refused, sign-out and removal end access",
+      "severity": "high",
+      "passed": true,
+      "detail": "rp=localhost register=200 replay_register=400 sign_in=200 session=oss_ me=alice/admin replay=401 wrong_origin=401 logout=200 after_logout=401 viewer_all=403 viewer_delete=403 ip_domain=400 remove=200 after_remove=401 audited=True",
+      "seconds": 0.03
+    },
+    {
+      "id": "I28",
+      "category": "intel",
+      "title": "Geo data: country, region and ASN on events, filters and top lists; geo/ASN rules block, challenge and fail open",
+      "severity": "high",
+      "passed": true,
+      "detail": "loaded=True viewer_paths_hidden=True enriched=True private=True filters=True tops=True impact=6/151 deny_cn=403/id=200 ip_allow_wins=200 only_id(us=403,jk=200,unknown=200,private=200) asn_block=403 region_challenge=403/challenge fail_open=True viewer_put=403 bad_code=400 bad_action=400 audited=True",
+      "seconds": 1.06
+    },
+    {
+      "id": "I29",
+      "category": "intel",
+      "title": "Error pages: HTML, JSON or text by Accept; branding, language and geo page; preview is short-lived and framed only by the dashboard",
+      "severity": "medium",
+      "passed": true,
+      "detail": "html=True json=True text=True bad_accent=400 viewer_put=403 branded=True geo_page=True header_431=431/True preview=True missing_preview=404 audited=True",
+      "seconds": 0.01
+    },
+    {
+      "id": "I21",
+      "category": "intel",
+      "title": "Failed admin logins are rate limited",
+      "severity": "medium",
+      "passed": true,
+      "detail": "codes=[401, 401, 401, 429, 429, 429, 429, 429, 429, 429, 429, 429]",
+      "seconds": 0.0
+    }
+  ]
+}

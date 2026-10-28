@@ -2504,7 +2504,7 @@
 
   VIEWS.settings = function (root, params, ctx) {
     if (!can('admin')) { root.append(pageHead('Settings'), stateBox('locked', 'Settings are for admins only.')); return; }
-    const TABS = [['ai', 'AI'], ['challenge', 'Challenge'], ['users', 'Users & tokens'], ['storage', 'Event storage'], ['geo', 'Geo data'], ['pages', 'Error pages'], ['security', 'Security']];
+    const TABS = [['ai', 'AI'], ['challenge', 'Challenge'], ['autoblock', 'Auto-block'], ['users', 'Users & tokens'], ['storage', 'Event storage'], ['geo', 'Geo data'], ['pages', 'Error pages'], ['security', 'Security']];
     let tab = params.get('tab') || (S.me && S.me.setup_mode ? 'users' : 'ai');
     if (!TABS.some((t) => t[0] === tab)) tab = 'ai';
     const body = h('div', { class: 'settings-body' });
@@ -2523,7 +2523,7 @@
     }
     function render() {
       if (!data) return;
-      const fn = { ai: aiCard, challenge: challengeCard, users: usersCard, storage: storageCard, geo: geoCard, pages: pagesCard, security: () => h('div', { class: 'stack' }, securityCard(), passkeyCard()) }[tab];
+      const fn = { ai: aiCard, challenge: challengeCard, autoblock: autoBlockCard, users: usersCard, storage: storageCard, geo: geoCard, pages: pagesCard, security: () => h('div', { class: 'stack' }, securityCard(), passkeyCard()) }[tab];
       body.replaceChildren(fn());
     }
 
@@ -2689,6 +2689,55 @@
       loadUsers().catch((e) => { if (e.status !== 401) list.replaceChildren(stateBox('error', e.message)); });
       wrap.append(c.el, addCard.el);
       return wrap;
+    }
+
+    function autoBlockCard() {
+      const ab = data.auto_block, v = ab.values, win = ab.window_s;
+      const c = card('Auto-block', { actions: sourceBadge2(ab.source, ab.updated) });
+      const durations = TTLS.filter((t) => t[0] > 0);
+      if (!durations.some((t) => t[0] === v.ttl_s)) durations.unshift([v.ttl_s, v.ttl_s + ' seconds']);
+      const durText = (s) => (durations.find((t) => t[0] === s) || [0, s + ' seconds'])[1];
+      const triggers = (blocks, score) => [blocks > 0 ? blocks + ' rule blocks in ' + win + ' s' : null,
+        score > 0 ? 'an anomaly score of ' + score + ' or more' : null].filter(Boolean).join(' or ');
+      const status = !ab.anomaly_enabled
+        ? h('div', { class: 'callout callout-warn' }, icon('alerts'), h('span', { text: 'Anomaly detection is off in the config file (intel.anomaly.enabled), so nothing is blocked automatically.' }))
+        : v.enabled
+          ? h('div', { class: 'callout callout-ok' }, icon('shield'), h('span', { text: 'On: a client is blocked for ' + durText(v.ttl_s) + ' after ' + triggers(v.blocks_in_window, v.min_score) + '.' }))
+          : h('div', { class: 'callout' }, icon('shield'), h('span', { text: 'Off: nothing is blocked automatically.' }));
+      const enabled = checkbox('Block clients automatically', v.enabled, 'Uses rule blocks and the anomaly score only, never AI verdicts. IPs on the allow list are never blocked.');
+      const blocks = numInput(v.blocks_in_window, 0, 100000);
+      const score = numInput(v.min_score, 0, 1, 0.05);
+      const ttl = select(durations.map(([d, t]) => [d, t]), v.ttl_s);
+      const save = h('button', { type: 'submit', class: 'btn btn-primary', text: 'Save' });
+      const reset = h('button', { type: 'button', class: 'btn', text: 'Reset to config file' });
+      const form = h('form', { class: 'settings-form' },
+        status,
+        enabled.el,
+        h('div', { class: 'grid grid-3' },
+          field('Rule blocks in ' + win + ' s', blocks, '0 turns this trigger off.'),
+          field('Anomaly score at or above', score, '0 turns this off. 0.6 catches an attack burst, a very high request rate, or scanning with errors; not scanning or errors alone.'),
+          field('Block for', ttl)),
+        h('p', { class: 'hint', text: 'Clients behind one shared address (an office or a mobile carrier) count as one client: add such addresses to the allow list under Controls, where blocked clients are listed and can be unblocked.' }),
+        h('div', { class: 'row form-actions' }, save, ab.source === 'dashboard' ? reset : null, h('a', { href: '#/controls', class: 'btn', text: 'Open Controls' })));
+      form.addEventListener('submit', (e) => {
+        e.preventDefault();
+        const body = { enabled: enabled.box.checked, blocks_in_window: Number(blocks.value), min_score: Number(score.value), ttl_s: Number(ttl.value) };
+        const put = async () => {
+          await api('/api/settings/auto-block', { method: 'PUT', body });
+          toast(body.enabled ? 'Auto-block saved and applied.' : 'Auto-block is off.', 'ok');
+          await load();
+        };
+        if (!body.enabled) { act(save, put); return; }
+        const what = triggers(body.blocks_in_window, body.min_score);
+        modal({ title: 'Turn on auto-block: high-impact change', ok: 'Turn on', danger: true,
+          body: [h('p', { text: what
+            ? 'From now on, any client that reaches ' + what + ' gets 403 on every request for ' + durText(body.ttl_s) + '. This applies at once, without a restart.'
+            : 'Set a rule-block count or an anomaly score first.' })],
+          action: async () => { if (!what) return 'Set a rule-block count or an anomaly score.'; try { await put(); } catch (ex) { return ex.message; } } });
+      });
+      reset.addEventListener('click', () => act(reset, async () => { await api('/api/settings/auto-block', { method: 'DELETE' }); toast('Auto-block reset to the config file.', 'ok'); await load(); }));
+      c.body.appendChild(form);
+      return c.el;
     }
 
     function storageCard() {
